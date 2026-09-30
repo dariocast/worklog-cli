@@ -1,174 +1,128 @@
 # WorkLog CLI
 
-A small, local task and time ledger for humans, Claude Code, Codex and other
-agents. SQLite is the source of truth. No cloud, account, server, telemetry or
-runtime dependencies. Python 3.11+ on macOS/Linux.
+Billable working time from your AI agent chats and manual entries, in a local
+ledger, ready to copy into Jira, GoodDay or any other tracker (or to use on its
+own).
 
-The package is **worklog-cli** and the command is `worklog`.
+- **Automatic for agents.** Hooks in Claude Code and Codex record every turn.
+  The model does not have to remember anything, and there is no timer to stop.
+- **Simple for humans.** `worklog log 1h30 ...` after the fact. Nothing can be
+  left running.
+- **Private.** SQLite on your machine. No network, no account, no AI calls, and
+  never the text of your prompts.
+
+Python 3.11+ on macOS or Linux, no runtime dependencies.
 
 ## Install
 
-From this repository:
-
 ```sh
-uv tool install .
-# Or: pipx install .
-worklog --help
+uv tool install git+https://github.com/dariocast/worklog-cli
+worklog setup
 ```
 
-For development (install [uv](https://docs.astral.sh/uv/) first):
+`setup` detects Claude Code (`~/.claude/settings.json`) and Codex
+(`~/.codex/hooks.json`), shows the exact diff, and asks before writing. It keeps
+a backup, leaves your other hooks alone, and can be undone with
+`worklog setup --uninstall`. Run `worklog doctor` at any time to check hooks,
+ledger and pending events. Upgrade with `uv tool upgrade worklog-cli`.
+
+## Tell WorkLog where your projects are
+
+Mappings live in your global config, never in repositories:
+
+```sh
+worklog map ~/Workspaces/ExampleClient example-client
+worklog map ~/Workspaces/Personal ignore
+```
+
+The most specific path wins. Chats in an unmapped directory are tracked in the
+**inbox**, and the agent asks you once which project it belongs to. That is the
+only question you will get.
+
+## How agent time is counted
+
+Each turn runs from your prompt to the agent's last activity. A gap shorter than
+the idle threshold (15 minutes by default) between turns of the same task
+counts as work: reading, testing and thinking are part of the job. Longer gaps
+do not count. If a turn is interrupted, it ends at the last tool the agent ran.
+Two chats on the same task count once; parallel chats on different tasks each
+count in full.
+
+One chat is one task by default. The agent receives a short note in the chat
+with its task ID and names the task, sets the tracker key, or attaches the chat
+to an existing task (for example the execution chat of an earlier planning
+chat). A chat can be excluded with `worklog ignore --session ID`.
+
+## Everyday commands
+
+```sh
+worklog report --week                    # one row per day and task
+worklog report --from 2026-09-01 --to 2026-09-30 --round 15m --format csv
+worklog log 1h30 --project example-client --title "Planning meeting"
+worklog log 09:00-10:30 --day yesterday --task ACT-20260930-001 --note "Review"
+worklog list --open
+worklog edit ACT-20260930-001 --ref DEMO-123 --done
+worklog inbox
+worklog intervals --today
+worklog move 3f2a9c1e --task ACT-20260930-002
+worklog rm 3f2a9c1e                      # prints the command to recreate it
+```
+
+A report row shows the day, the tracker key (or the project when there is
+none), the title, the duration and the notes:
+
+```
+2026-09-29  DEMO-123        Crash on startup  1h20  Root cause found; fix and tests
+2026-09-30  example-client  CI configuration  2h10
+Total 3h30
+```
+
+Days use your system timezone unless `--timezone` is given. There is no rounding
+unless you ask for it, and no "already logged" state: your tracker remembers
+what you logged.
+
+## Configuration and files
+
+```toml
+# ~/.config/worklog/config.toml
+idle_threshold = "15m"
+
+[paths]
+"~/Workspaces/ExampleClient" = "example-client"
+"~/Workspaces/Personal" = "ignore"
+```
+
+`worklog map` rewrites this file (comments are not kept). The ledger is
+`~/.local/share/worklog/ledger.db`; the hook spool and error log are in
+`~/.local/state/worklog/`. XDG variables are honored, and `WORKLOG_DB` or `--db`
+select another ledger. Back up with
+`sqlite3 ~/.local/share/worklog/ledger.db '.backup /path/backup.db'`.
+
+## Other agents and surfaces
+
+Claude Code (CLI and the desktop Code tab) and Codex are supported through
+hooks. Agents without hooks can follow [the fallback rule](docs/agent-rule.md)
+and record closed intervals with `worklog log`; this is best effort. Regular
+desktop chat, Cowork and cloud sessions cannot reach your local ledger: log that
+time by hand.
+
+## For scripts and agents
+
+Every command accepts `--json`: `{"schema_version": 1, "data": ...}` on stdout
+and exit 0, or `{"schema_version": 1, "error": {"code", "message"}}` on stderr
+and exit 2. See the [JSON contract](docs/json-api.md). Human output is not an
+API.
+
+## Development
 
 ```sh
 uv sync --locked
-uv run worklog --help
 uv run pytest
-uv run ruff check .
-uv run ruff format --check .
+uv run ruff check . && uv run ruff format --check .
 uv run mypy src
 uv build
 ```
 
-Dependencies are locked in `uv.lock`; the installed CLI uses only the Python
-standard library. No publication to PyPI is assumed by these instructions.
-
-## Quick start
-
-```sh
-worklog project add example-project --alias example
-worklog start --project example --title "Review example configuration" --tag debug
-worklog status
-worklog stop
-worklog list --json
-# Copy the ID returned by start:
-worklog resume ACT-20260930-001
-worklog stop
-worklog show ACT-20260930-001
-worklog export --format csv --output times.csv
-worklog export --format json --output ledger.json
-```
-
-The example ID depends on the actual UTC date and sequence. `start ID` and
-`resume ID` create a new session on the same task. `start --title ...` always
-creates a new task, even when another task has the same title. Save and reuse
-IDs rather than matching titles. Only one session can run per database.
-`start` refuses to interrupt it; `switch ID` stops and resumes atomically.
-`stop` while idle succeeds without changes. Repeating `complete ID` preserves
-the original completion timestamp until the task is reopened. There are no interactive prompts.
-
-## Commands
-
-| Command | Purpose |
-| --- | --- |
-| `project add NAME --alias ALIAS --metadata '{"team":"demo"}'` | Register a project |
-| `projects` | List canonical project names and aliases |
-| `task add --project NAME --title TITLE` | Create without starting |
-| `start --project NAME --title TITLE --tag TAG` | Create and start |
-| `start ID` / `resume ID` | Add a session to an unfinished task |
-| `switch ID` | Atomically stop current session and resume target |
-| `stop` / `status` | Stop or inspect running session |
-| `list --project NAME --status in_progress --tag debug` | Filter tasks |
-| `show ID` | Inspect all sessions, tags, notes and references |
-| `edit ID --title TITLE --description TEXT --notes TEXT` | Replace task fields |
-| `edit ID --tag debug --tag backend` / `edit ID --clear-tags` | Replace/clear tags |
-| `edit ID --ref jira DEMO-123 --url https://example.org/ticket` | Add/update external reference |
-| `complete ID` | Close its active session and mark done |
-| `edit ID --status todo` | Reopen a completed task |
-| `today --timezone Europe/Paris` | Today's time in the selected timezone |
-| `report --from 2026-09-01 --to 2026-09-30 --timezone Europe/Paris` | Summarize actual intervals |
-| `export --format csv` / `export --format json` | Export to stdout |
-
-`--json` and `--db PATH` work before or after the subcommand. Report/export
-support the same filters as list. Reports default to all dates and UTC;
-`today` also defaults to UTC. Date ranges are inclusive calendar dates; intervals
-crossing midnight or a daylight-saving boundary are clipped correctly. Active
-sessions contribute elapsed time at the snapshot. Human durations are HH:MM:SS;
-JSON durations are seconds without billing rounding. `in_progress` means work
-has begun, and remains so after stopping; `status` indicates whether a session
-is actually running. All stored timestamps and ID dates use UTC.
-
-## Storage and configuration
-
-On **both macOS and Linux**:
-
-- DB: `$XDG_DATA_HOME/worklog/worklog.db`, fallback `~/.local/share/worklog/worklog.db`.
-- Config: `$XDG_CONFIG_HOME/worklog/config.toml`, fallback `~/.config/worklog/config.toml`.
-- DB override: `--db PATH` > `WORKLOG_DB` > default. Relative explicit paths are
-  relative to the current directory; relative XDG variables are ignored.
-
-The CLI creates the DB directory and schema automatically, but never writes a
-configuration file. Newly created databases have mode 0600 and new data directories
-0700. Existing permissions are preserved. Keep the DB on a local filesystem;
-concurrent CLI processes are serialized by SQLite (10 second lock timeout).
-
-Global configuration and a repository's `.worklog.toml` use the same format:
-
-```toml
-project = "example-project"
-tags = ["example", "demo"]
-```
-
-Lookup: explicit flags > nearest `.worklog.toml` in current directory/parents >
-global config > clear error for a missing project. Resolution is per key; tag
-arrays replace instead of merge. Only the nearest repo file is used. Register
-the project once with `project add`; detection never creates projects silently.
-Config applies to **new tasks** only. List/report/export remain ledger-wide
-unless explicitly filtered. Resume always uses the stored task's project/tags.
-Unknown config keys or malformed TOML cause a clear error. Config is data only;
-it cannot execute hooks or redirect storage.
-
-## Agent integration and JSON API
-
-See [Claude global rule](docs/claude-global-rule.md),
-[Codex / shared ~/.agents setup](docs/agents.md), and
-[JSON contract](docs/json-api.md). Rules are opt-in: ask the user whether to track
-substantial new work, retain the task ID across follow-ups, stop at the end or
-when switching work. Jira and GoodDay are references, never the source of truth.
-
-```sh
-worklog status --json
-worklog list --json
-worklog report --json
-```
-
-Success: `{"schema_version":1,"data":...}` on stdout, exit 0.
-Error: `{"schema_version":1,"error":{"code":"...","message":"..."}}` on
-stderr, exit 2. JSON is UTF-8; consumers should ignore unknown fields and treat
-IDs as opaque. Human output is not an API. `--help`/`--version` remain plain text.
-
-## Export and backup
-
-CSV has one row per session and an empty-session row for tasks without sessions.
-Tags and references are JSON cells. Spreadsheet formula prefixes are escaped
-with an apostrophe; use JSON for lossless content. JSON includes projects,
-aliases, metadata, tasks, sessions, tags and external references. It is a snapshot,
-not yet an import/restore format. `--output` creates a new file and refuses to
-overwrite one. `--json --format csv` is rejected to prevent mixed formats.
-
-For an exact backup, use SQLite's backup facility (also safe while the CLI is
-being used):
-
-```sh
-sqlite3 "$HOME/.local/share/worklog/worklog.db" '.backup /absolute/path/worklog-backup.db'
-```
-
-Adjust the source for XDG/overrides. To restore, stop using the CLI and replace
-the DB with the backup. Export files may contain private notes; choose their
-location carefully. Nothing sends data to corporate systems.
-
-## Design, development and limitations
-
-[Technical specification](docs/design.md) describes the schema and decisions.
-The code separates CLI, config, transactional ledger, report calculation and
-export. SQLite `user_version` is 1; newer schemas are rejected. Future versions
-must add tested migrations before changing it. Tests cover concurrency,
-rollback, reports, config, exports and subprocess acceptance flows.
-
-0.1 deliberately excludes XLSX, manual session time correction, import, deletion,
-billing, network integrations and multiple simultaneous timers. CSV opens in
-spreadsheet apps; the export module is the extension point for future formats.
-A timer measures wall-clock time, including machine sleep, until explicitly
-stopped. A backward clock change raises an actionable error on stop/start;
-fix the system clock before retrying. No background process guesses work time.
-
-Contributions: see [CONTRIBUTING.md](CONTRIBUTING.md). Changes follow SemVer and
-[CHANGELOG.md](CHANGELOG.md). Licensed under [MIT](LICENSE).
+The [design](docs/design.md) records the decisions and their reasons. See
+[CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md). MIT
+licensed.

@@ -1,6 +1,6 @@
 # WorkLog CLI 0.2 design
 
-Status: agreed specification, not yet implemented. Supersedes the 0.1 design.
+Status: implemented in 0.2.0. Supersedes the 0.1 design.
 
 ## Purpose
 
@@ -43,18 +43,21 @@ description and notes, multiple external references, three-state status.
   created_at.
 - **interval**: UUID, task FK, started_at, ended_at (never null), source
   (`claude`, `codex`, `manual`), optional agent session ID, optional note.
-- **agent_session**: agent + session ID → task, plus ignored flag. Several
-  sessions may point to the same task (for example one chat for elaboration and
-  another for execution).
-- **turn**: raw hook facts per agent session (turn start, last activity, turn
-  end). Intervals are derived from turns; no prompt text is ever stored.
+- **agent_session**: agent + session ID → task, cwd, ignored flag and a hash of
+  the last injected note. Several sessions may point to the same task (for
+  example one chat for elaboration and another for execution).
+
+An agent turn is an interval row that starts at the prompt and whose end is
+moved forward by each heartbeat, so it is closed at every moment and never
+grows by itself. No prompt text is ever stored.
 
 Timestamps are UTC ISO 8601 with offset; durations are computed, never stored.
 Mutations are transactional (BEGIN IMMEDIATE). Schema version via
 `PRAGMA user_version`; newer versions are rejected.
 
 Storage follows XDG with `~/.local/*` and `~/.config` fallbacks on macOS and
-Linux: ledger in `$XDG_DATA_HOME/worklog/worklog.db`, configuration in
+Linux: ledger in `$XDG_DATA_HOME/worklog/ledger.db` (a new file, so a 0.1
+`worklog.db` stays untouched), configuration in
 `$XDG_CONFIG_HOME/worklog/config.toml`, hook spool and error log in
 `$XDG_STATE_HOME/worklog/`. `WORKLOG_DB` and `--db` override the ledger path.
 
@@ -63,15 +66,19 @@ Linux: ledger in `$XDG_DATA_HOME/worklog/worklog.db`, configuration in
 ### Hooks
 
 Supported fully: Claude Code (CLI and desktop Code tab) and Codex, which share
-the events used here. Each hook runs `worklog hook EVENT --agent NAME` and reads
-the event JSON (session ID, cwd, timestamps) from stdin.
+the events used here. Each hook runs `worklog hook KIND --agent NAME` and reads
+only `session_id` and `cwd` from the event JSON on stdin; the time is the
+moment the hook runs.
 
-| Event | Effect |
-| --- | --- |
-| `SessionStart` | Resolve directory → project, bind session to a task, inject context |
-| `UserPromptSubmit` | Record turn start; re-inject context only if it changed |
-| `PostToolUse` | Heartbeat: record last activity for the session |
-| `Stop` | Record turn end |
+| Event | Kind | Effect |
+| --- | --- | --- |
+| `UserPromptSubmit` | `prompt` | Bind the chat to a task on first use; start a turn; inject the note if it changed |
+| `PostToolUse` | `activity` | Heartbeat: extend the current turn |
+| `Stop` | `activity` | End the turn |
+
+`SessionStart` is not used: Codex rejects `additionalContext` on it
+(openai/codex#45999), while plain stdout on `UserPromptSubmit` works for both.
+Claude Code does not run `Stop` on user interrupt.
 
 A turn without `Stop` (interrupted, app closed, crash) ends at its last
 heartbeat, or at its start if no tool ran. Time is never extended beyond the
@@ -94,7 +101,8 @@ shell use the fallback rule (see Agents).
 - Consecutive turns on the same task whose gap is shorter than the idle
   threshold (default 15 minutes, configurable) are joined: short reading and
   thinking time counts as work. Longer gaps are not counted.
-- Overlapping intervals on the **same** task are merged (counted once).
+- Overlapping agent intervals on the **same** task are merged (counted once).
+- Manual entries are counted exactly as entered; they are explicit statements.
 - Parallel work on **different** tasks is counted in full for each task. Daily
   totals may exceed wall-clock time by design.
 
@@ -132,20 +140,23 @@ working in the chat, which has the context. It must stay cheap: at most one
 command at the start and one when the activity changes, no subagents, no
 extended reasoning.
 
-For hooked agents the instructions are injected by the `SessionStart` hook and
-re-injected only when something changes. Example for a mapped directory:
+For hooked agents the note is printed by the `prompt` hook on the first prompt
+and again only when it changes. It names the chat's session key, because a
+command run by the agent cannot otherwise know which chat it belongs to.
+Example for a mapped directory:
 
-> This chat is tracked by WorkLog as task ACT-20260930-003 (project
-> example-client) with a provisional title. Once the activity is clear, run
-> `worklog assign --title "..."`. If it continues an open task
-> (`worklog list --open --json`), run `worklog assign --task ID` instead. Add
-> `--ref KEY` if you know the tracker key. Put the task ID in any handoff.
+> [WorkLog] This chat (claude:ab12) is tracked automatically; no timer to manage.
+> Task ACT-20260930-003, project example-client, provisional title.
+> When the activity is clear, run `worklog assign --session claude:ab12 --title "..."`
+> (add `--ref KEY` if a tracker key is known). If it continues an open task
+> (`worklog list --open --json`), use `worklog assign --session claude:ab12 --task ID`.
+> Put the task ID in any handoff. ...
 
 For the inbox the instruction is to ask which project the directory belongs to
 and run `worklog map`. Ignored directories get no injection. No rule file needs
 to be installed for Claude Code or Codex.
 
-Agents without hooks use [claude-global-rule.md](claude-global-rule.md): note a
+Agents without hooks use [agent-rule.md](agent-rule.md): note a
 start time and record the closed interval with `worklog log` before the final
 answer. This is best effort.
 
@@ -161,18 +172,19 @@ No interactive prompts except the `setup` confirmation.
 | `list [--open] [--project P]` | List tasks |
 | `show ID` | Task with intervals |
 | `edit ID [--title T] [--ref R] [--done \| --open]` | Change a task |
-| `assign [--session S] (--task ID \| --title T) [--ref R]` | Bind a chat to a task or rename its task; session defaults to the current chat |
+| `assign --session S [--task ID] [--title T] [--ref R] [--project P]` | Bind a chat to a task, or change its task |
 | `map PATH PROJECT` / `map PATH ignore` | Map a directory; moves its inbox time |
 | `inbox` | Unassigned time by directory and session |
-| `ignore --session [S]` | Stop tracking a chat and discard its time |
+| `ignore --session S` | Stop tracking a chat and discard its time |
 | `intervals [--today \| --from D --to D]` | List intervals with short IDs |
 | `move INTERVAL\|--session S --task ID` | Reassign intervals |
 | `rm INTERVAL` | Delete an interval; prints the `log` command that recreates it |
 | `report [--today \| --yesterday \| --week \| --from D --to D] [--round 15m] [--format table\|csv\|json]` | Billable entries |
 | `projects` | List projects |
-| `setup [--yes] [--uninstall]` | Install or remove hooks |
+| `project add NAME` | Register a project for manual logging |
+| `setup [--dry-run] [--yes] [--uninstall]` | Install or remove hooks |
 | `doctor` | Check hooks, executable path, ledger and spool |
-| `hook EVENT --agent A` | Internal, called by hooks |
+| `hook KIND --agent A` | Internal, called by hooks; always exits 0 |
 
 ## Reports
 
@@ -192,7 +204,7 @@ timezone unless `--timezone` is given. No rounding unless `--round` is given
 
 `worklog setup` detects Claude Code and Codex, shows the exact diff of
 `~/.claude/settings.json` and `~/.codex/hooks.json`, writes only after
-confirmation (or `--yes`), keeps a backup, never touches other hooks, is
+confirmation (or `--yes`; `--dry-run` only shows it), keeps a backup, never touches other hooks, is
 idempotent (its entries are recognized by the `worklog hook` command) and
 writes the absolute path of the executable, because desktop apps often lack
 `~/.local/bin` in PATH. `--uninstall` removes only its own entries.
@@ -207,7 +219,5 @@ commands. Subprocess acceptance flows use temporary data/config/state paths.
 Ruff, mypy strict and pytest run locally and in GitHub Actions. Public examples
 and fixtures stay fictional.
 
-## Open points for implementation
-
-- Confirm Codex hook payload fields and context injection against its docs.
-- Confirm Claude Code `Stop` behavior on user interrupt.
+`log DURATION` on today ends now; on another day it starts at 09:00 local
+time. Clock ranges must not cross midnight; split them.

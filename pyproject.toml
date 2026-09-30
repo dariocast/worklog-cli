@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "worklog-cli"
-version = "0.1.1"
-description = "Local task and session ledger for humans and AI agents"
+version = "0.2.0"
+description = "Billable time from AI agent chats and manual logs, in a local ledger"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

@@ -4,6 +4,27 @@ This project follows Semantic Versioning. Notable changes are recorded here.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-30
+
+Rewritten around hooks; not compatible with 0.1 (see docs/design.md).
+
+- Claude Code and Codex hooks record every agent turn automatically; `worklog
+  setup` installs them with a reviewable diff, backup and `--uninstall`.
+- Worked time joins turns separated by less than the idle threshold (15 minutes
+  by default); interrupted turns end at the last tool call; no open timers.
+- Directory → project mappings in the global config (`worklog map`), an inbox
+  for unmapped directories and `ignore` for private ones.
+- The hook injects a short note into the chat so the agent can name the task,
+  set its tracker key or attach the chat to an existing task (`worklog assign`).
+- Manual entries with `worklog log` (durations or clock ranges); corrections
+  with `intervals`, `move` and `rm`.
+- Reports per local day and task in table, CSV or JSON, with optional rounding.
+- `worklog doctor`, a spool for events that could not be written, and an
+  error log. Prompt text is never read or stored.
+- Removed timers (`start`, `stop`, `switch`, `resume`, `status`, `complete`),
+  repository `.worklog.toml`, tags, aliases, metadata, notes and exports. The
+  ledger is a new `ledger.db`; a 0.1 `worklog.db` is left untouched.
+
 ## [0.1.1] - 2026-09-30
 
 - Make the shared agent rule directly importable as active instructions.

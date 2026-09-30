@@ -8,28 +8,18 @@ from pathlib import Path
 
 import pytest
 
-from worklog_cli.config import default_db, resolve
 
-
-@pytest.fixture
-def cli(tmp_path, monkeypatch):
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    monkeypatch.delenv("WORKLOG_DB", raising=False)
-    monkeypatch.chdir(tmp_path)
-
-    def run(*args, ok=True):
-        result = subprocess.run(
-            [sys.executable, "-m", "worklog_cli.cli", *args],
-            text=True,
-            capture_output=True,
-            cwd=Path.cwd(),
-            env=os.environ.copy(),
-        )
-        assert result.returncode == (0 if ok else 2), result.stderr
-        return result
-
-    return run
+def run(*args, stdin="", ok=True, cwd=None):
+    result = subprocess.run(
+        [sys.executable, "-m", "worklog_cli.cli", *args],
+        input=stdin,
+        text=True,
+        capture_output=True,
+        cwd=cwd,
+        env=os.environ.copy(),
+    )
+    assert result.returncode == (0 if ok else 2), result.stderr
+    return result
 
 
 def data(result):
@@ -38,151 +28,146 @@ def data(result):
     return body["data"]
 
 
-def test_acceptance(cli, tmp_path):
-    cli("project", "add", "example-project")
-    started = data(
-        cli(
-            "start",
+def hook(kind, session, cwd, agent="claude", payload=None):
+    body = (
+        payload
+        if payload is not None
+        else json.dumps({"session_id": session, "cwd": str(cwd), "prompt": "secret prompt text"})
+    )
+    result = run("hook", kind, "--agent", agent, stdin=body)
+    assert result.stderr == ""
+    return result.stdout
+
+
+def test_agent_flow_end_to_end(isolated):
+    repo = isolated / "work" / "example-repo"
+    repo.mkdir(parents=True)
+    mapped = data(run("map", str(isolated / "work"), "example-project", "--json"))
+    assert mapped["moved_sessions"] == 0
+    first = hook("prompt", "abc", repo)
+    assert "[WorkLog]" in first and "claude:abc" in first and "example-project" in first
+    assert hook("activity", "abc", repo) == ""
+    assert hook("prompt", "abc", repo) == ""  # context is injected once
+    hook("activity", "abc", repo)
+    info = data(
+        run(
+            "assign", "--session", "claude:abc", "--title", "Fix login", "--ref", "DEMO-1", "--json"
+        )
+    )
+    assert info["title"] == "Fix login"
+    tasks = data(run("list", "--open", "--json"))
+    assert [t["ref"] for t in tasks] == ["DEMO-1"]
+    ledger_bytes = (isolated / "data" / "worklog" / "ledger.db").read_bytes()
+    assert b"secret prompt text" not in ledger_bytes
+    assert list((isolated / "state" / "worklog").glob("spool*")) == []  # drained by commands
+    entries = data(run("report", "--today", "--json"))["entries"]
+    assert [(e["key"], e["title"]) for e in entries] == [("DEMO-1", "Fix login")]
+
+
+def test_hooks_never_fail_or_print_on_errors(isolated):
+    assert hook("prompt", "x", isolated, payload="not json") == ""
+    assert hook("prompt", "x", isolated, agent="unknown") == ""
+    assert run("hook").returncode == 0
+    errors = (isolated / "state" / "worklog" / "errors.log").read_text()
+    assert "without session_id" in errors and "unsupported hook" in errors
+    doctor = data(run("doctor", "--json"))
+    assert not doctor["ok"]
+    assert any(c["name"] == "hook errors" and not c["ok"] for c in doctor["checks"])
+
+
+def test_unmapped_chat_lands_in_inbox(isolated):
+    hook("prompt", "s", isolated / "somewhere")
+    inbox = data(run("inbox", "--json"))
+    assert [i["session"] for i in inbox] == ["claude:s"]
+    run("map", str(isolated / "somewhere"), "ignore")
+    assert data(run("inbox", "--json")) == []
+    config = (isolated / "config" / "worklog" / "config.toml").read_text()
+    assert '"ignore"' in config
+
+
+def test_manual_logging_and_report_formats(isolated):
+    run("project", "add", "example-project")
+    logged = data(
+        run(
+            "log",
+            "1h30",
+            "--day",
+            "yesterday",
             "--project",
             "example-project",
             "--title",
-            "Review example configuration",
+            "Workshop",
+            "--note",
+            "=cmd()",
             "--json",
         )
     )
-    task_id = started["id"]
-    assert task_id in cli("status").stdout
-    assert data(cli("status", "--json"))["active"]
-    assert "Stopped" in cli("stop").stdout
-    assert task_id in cli("list").stdout
-    assert len(data(cli("list", "--json"))) == 1
-    cli("start", task_id)
-    cli("stop")
-    tasks = data(cli("list", "--json"))
-    assert len(tasks) == 1 and len(tasks[0]["sessions"]) == 2
-    rows = list(csv.DictReader(io.StringIO(cli("export", "--format", "csv").stdout)))
-    assert len(rows) == 2 and rows[0]["task_id"] == task_id
-    exported = data(cli("export", "--format", "json"))
-    assert exported["tasks"] == tasks
-    assert exported["projects"][0]["name"] == "example-project"
-    assert data(cli("report", "--json"))["duration_seconds"] >= 0
-    (tmp_path / ".worklog.toml").write_text(
-        'project = "example-project"\ntags = ["demo", "example"]\n'
-    )
-    nested = tmp_path / "nested"
-    nested.mkdir()
-    os.chdir(nested)
-    detected = data(cli("start", "--title", "Detected", "--json"))
-    assert detected["project"] == "example-project"
-    assert detected["tags"] == ["demo", "example"]
-    cli("stop")
+    assert logged["duration_seconds"] == 5400
+    task_id = logged["task_id"]
+    run("log", "10:00-10:20", "--day", "yesterday", "--task", task_id)
+    text = run("report", "--yesterday").stdout
+    assert "example-project" in text and "1h50" in text and "Workshop" in text
+    rounded = data(run("report", "--yesterday", "--round", "1h", "--json"))
+    assert rounded["entries"][0]["duration_seconds"] == 7200
+    rows = list(csv.DictReader(io.StringIO(run("report", "--yesterday", "--format", "csv").stdout)))
+    assert rows[0]["minutes"] == "110" and rows[0]["notes"] == "'=cmd()"
+    listed = run("intervals", "--yesterday").stdout.splitlines()
+    assert len(listed) == 2
+    removed = run("rm", listed[0].split()[0]).stdout
+    assert "worklog log" in removed and "--task " + task_id in removed
+    assert len(run("intervals", "--yesterday").stdout.splitlines()) == 1
 
 
-def test_errors_and_global_positions(cli, tmp_path):
-    failure = cli("start", "--title", "Missing project", "--json", ok=False)
-    assert not failure.stdout
-    assert json.loads(failure.stderr)["error"]["code"] == "validation_error"
-    assert json.loads(cli("bogus", "--json", ok=False).stderr)["error"]["code"] == "usage_error"
-    assert json.loads(cli("--db", "--json", ok=False).stderr)["error"]
-    other = str(tmp_path / "other.db")
-    cli("--json", "project", "add", "other", "--db", other)
-    assert len(data(cli("projects", "--db=" + other, "--json"))) == 1
-    assert data(cli("projects", "--json")) == []
-    assert cli("--version").stdout.strip() == "WorkLog CLI 0.1.1"
-    assert "export" in cli("--help").stdout
-
-
-def test_config_precedence(cli, tmp_path):
-    config = tmp_path / "config" / "worklog"
-    config.mkdir(parents=True)
-    (config / "config.toml").write_text('project="global"\ntags=["global"]')
-    (tmp_path / ".worklog.toml").write_text('project="repo"\ntags=["repo"]')
-    assert resolve(None, None).project == "repo"
-    assert resolve("explicit", ["explicit"]).tags == ("explicit",)
-    assert resolve("explicit", None).project == "explicit"
-    assert resolve(None, []).tags == ()
-    sub = tmp_path / "child"
-    sub.mkdir()
-    (sub / ".worklog.toml").write_text('tags=["child"]')
-    os.chdir(sub)
-    assert resolve(None, None).project == "global"
-    assert resolve(None, None).tags == ("child",)
-
-
-@pytest.mark.parametrize(
-    "content",
-    ["project = 1", 'tags = "bad"', "tags = [1]", 'project = ""', "unknown = 1", "invalid = ["],
-)
-def test_bad_config(cli, tmp_path, content):
-    (tmp_path / ".worklog.toml").write_text(content)
-    result = cli("start", "--title", "test", "--json", ok=False)
-    assert json.loads(result.stderr)["error"]
-
-
-def test_xdg_relative_ignored(monkeypatch):
-    monkeypatch.setenv("XDG_DATA_HOME", "relative")
-    assert default_db() == Path.home() / ".local/share/worklog/worklog.db"
-
-
-def test_edit_complete_and_export_safety(cli, tmp_path):
-    cli("project", "add", "p", "--alias", "alias", "--metadata", '{"team":"a"}')
-    task = data(cli("task", "add", "--project", "alias", "--title", "=1+1", "--json"))
-    task_id = task["id"]
-    cli(
-        "edit",
-        task_id,
-        "--ref",
-        "jira",
-        "KEY-1",
-        "--url",
-        "https://example.org",
-        "--notes",
-        "line1\nline2",
-        "--tag",
-        "x",
-    )
-    shown = data(cli("show", task_id, "--json"))
-    assert shown["external_references"][0]["system"] == "jira"
-    assert shown["notes"] == "line1\nline2"
-    assert "KEY-1" in cli("show", task_id).stdout
-    cli("resume", task_id)
-    cli("complete", task_id)
-    assert not data(cli("status", "--json"))["active"]
-    cli("resume", task_id, "--json", ok=False)
-    cli("edit", task_id, "--status", "todo", "--clear-tags")
-    assert data(cli("show", task_id, "--json"))["tags"] == []
-    rows = list(csv.DictReader(io.StringIO(cli("export", "--format", "csv").stdout)))
-    assert rows[0]["title"] == "'=1+1"
-    output = tmp_path / "export.json"
-    cli("export", "--format", "json", "--output", str(output))
-    before = output.read_bytes()
-    cli("export", "--format", "json", "--output", str(output), ok=False)
-    assert output.read_bytes() == before
-    cli("export", "--format", "csv", "--json", ok=False)
-    cli("today", "--timezone", "Europe/Paris", "--json")
-    cli("today", "--timezone", "Invalid", "--json", ok=False)
-
-
-def test_missing_and_empty_inputs(cli):
-    cli("project", "add", "p")
-    cli("start", "--project", "p", "--title", "   ", ok=False)
-    cli("start", "--project", "p", ok=False)
-    cli("project", "add", "p", ok=False)
-    cli("project", "add", "q", "--metadata", "[]", ok=False)
-    cli("show", "missing", ok=False)
-    cli("edit", "missing", "--url", "https://example.org", ok=False)
-    task = data(cli("task", "add", "--project", "p", "--title=--json", "--json"))
-    assert task["title"] == "--json"
-    cli("start", task["id"], "--title", "ignored", ok=False)
-    assert data(cli("status", "--json"))["active"] is False
-
-
-@pytest.mark.parametrize("metadata", ['{"x": NaN}', '{"x": Infinity}', '{"x": 1e999}'])
-def test_metadata_is_strict_json(cli, metadata):
-    cli("project", "add", "p", "--metadata", metadata, "--json", ok=False)
-    assert data(cli("projects", "--json")) == []
-
-
-def test_invalid_timezone_path(cli):
-    result = cli("today", "--timezone", "/etc/passwd", "--json", ok=False)
+def test_structured_errors(isolated):
+    result = run("log", "90", "--task", "ACT-1", "--json", ok=False)
+    assert result.stdout == ""
     assert json.loads(result.stderr)["error"]["code"] == "validation_error"
+    result = run("report", "--today", "--from", "2026-01-01", "--json", ok=False)
+    assert json.loads(result.stderr)["error"]["code"] == "usage_error"
+    assert run("--version").stdout.strip().startswith("WorkLog CLI 0.2")
+
+
+@pytest.fixture
+def agent_homes(isolated):
+    home = Path(os.environ["HOME"])
+    claude, codex = home / ".claude", home / ".codex"
+    claude.mkdir()
+    codex.mkdir()
+    other = {"type": "command", "command": "/usr/local/bin/other-tool"}
+    (claude / "settings.json").write_text(
+        json.dumps({"model": "x", "hooks": {"Stop": [{"hooks": [other]}]}}, indent=2) + "\n"
+    )
+    return claude / "settings.json", codex / "hooks.json", other
+
+
+def test_setup_is_reviewable_idempotent_and_reversible(agent_homes):
+    claude, codex, other = agent_homes
+    before = claude.read_text()
+    preview = data(run("setup", "--dry-run", "--json"))
+    assert {c["agent"] for c in preview["changes"]} == {"claude", "codex"}
+    assert claude.read_text() == before
+    assert run("setup", "--json", ok=False).stderr  # refuses without --yes
+    applied = data(run("setup", "--yes", "--json"))
+    assert len(applied["applied"]) == 2
+    settings = json.loads(claude.read_text())
+    assert settings["model"] == "x"
+    assert other in [h for g in settings["hooks"]["Stop"] for h in g["hooks"]]
+    commands = [h["command"] for g in settings["hooks"]["UserPromptSubmit"] for h in g["hooks"]]
+    assert len(commands) == 1 and commands[0].endswith(" hook prompt --agent claude")
+    assert json.loads(codex.read_text())["hooks"]["PostToolUse"]
+    assert list(claude.parent.glob("settings.json.worklog-backup-*"))
+    again = data(run("setup", "--yes", "--json"))
+    assert again["applied"] == []
+    doctor = {c["name"]: c for c in data(run("doctor", "--json"))["checks"]}
+    assert doctor["claude hooks"]["ok"] and doctor["codex hooks"]["ok"]
+    data(run("setup", "--uninstall", "--yes", "--json"))
+    assert json.loads(claude.read_text()) == json.loads(before)
+    assert codex.read_text() == ""
+
+
+def test_setup_refuses_invalid_settings(agent_homes):
+    claude, _, _ = agent_homes
+    claude.write_text("{broken")
+    result = run("setup", "--yes", "--json", ok=False)
+    assert json.loads(result.stderr)["error"]["code"] == "config_error"
+    assert claude.read_text() == "{broken"

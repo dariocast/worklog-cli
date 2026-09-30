@@ -1,4 +1,4 @@
-"""Noninteractive command line interface with a versioned JSON contract."""
+"""Command-line interface. JSON output is a stable API; human output is not."""
 
 import argparse
 import json
@@ -6,307 +6,463 @@ import os
 import sqlite3
 import sys
 from collections.abc import Sequence
+from datetime import date, datetime, time, timedelta, tzinfo
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from worklog_cli import __version__
-from worklog_cli.config import default_db, resolve
+from worklog_cli import __version__, config, hooks, installer, spool
 from worklog_cli.errors import WorklogError
-from worklog_cli.exporting import csv_text, json_text
 from worklog_cli.ledger import Ledger
-from worklog_cli.reporting import report
+from worklog_cli.reporting import csv_text, report, table
+from worklog_cli.timeutil import (
+    human_duration,
+    local_moment,
+    parse_clock,
+    parse_day,
+    parse_duration,
+    parse_iso,
+    to_local,
+    utcnow,
+)
 
-STATUSES = ("todo", "in_progress", "done")
+VALUE_OPTIONS = {
+    "--db", "--title", "--project", "--task", "--ref", "--note", "--day", "--from", "--to",
+    "--timezone", "--round", "--format", "--session",
+}  # fmt: skip
+READ_ONLY = {"list", "show", "projects", "inbox", "intervals", "report"}
 
 
 class Parser(argparse.ArgumentParser):
-    def error(self, message: str) -> NoReturn:
+    def error(self, message: str) -> Any:
         raise WorklogError(message, "usage_error")
 
 
+def period(command: argparse.ArgumentParser) -> None:
+    group = command.add_mutually_exclusive_group()
+    group.add_argument("--today", action="store_true")
+    group.add_argument("--yesterday", action="store_true")
+    group.add_argument("--week", action="store_true", help="Monday to Sunday of this week")
+    command.add_argument("--from", dest="start", help="YYYY-MM-DD, inclusive")
+    command.add_argument("--to", dest="end", help="YYYY-MM-DD, inclusive")
+    command.add_argument("--timezone", help="IANA name; default: system timezone")
+
+
 def parser() -> Parser:
-    root = Parser(prog="worklog", description="WorkLog CLI — local task and session ledger")
+    root = Parser(prog="worklog", description="Billable time from agent chats and manual logs.")
     root.add_argument("--version", action="version", version=f"WorkLog CLI {__version__}")
     root.add_argument("--json", action="store_true", help="Versioned JSON output (any position)")
-    root.add_argument("--db", help="Database path (any position); overrides WORKLOG_DB")
-    commands = root.add_subparsers(dest="command", required=True)
-    project = commands.add_parser("project", help="Manage projects")
-    add = project.add_subparsers(dest="action", required=True).add_parser("add")
-    add.add_argument("name")
-    add.add_argument("--alias", action="append", default=[])
-    add.add_argument("--metadata", default="{}", help="JSON object")
-    commands.add_parser("projects", help="List registered projects and aliases")
-    task_add = commands.add_parser("task", help="Create a task without starting a session")
-    task_add = task_add.add_subparsers(dest="action", required=True).add_parser("add")
-    for command in (task_add, commands.add_parser("start", help="Create or resume a task")):
-        if command is not task_add:
-            command.add_argument("task_id", nargs="?")
-        command.add_argument("--project")
-        command.add_argument("--title", required=command is task_add)
-        command.add_argument("--description", default=None)
-        command.add_argument("--tag", action="append", default=None)
-    for name in ("resume", "switch", "show", "complete"):
-        commands.add_parser(name).add_argument("task_id")
-    for name in ("stop", "status"):
-        commands.add_parser(name)
-    edit = commands.add_parser("edit", help="Edit task fields; tags/notes replace existing values")
+    root.add_argument("--db", help="Ledger path (any position); overrides WORKLOG_DB")
+    commands = root.add_subparsers(dest="command", required=True, parser_class=Parser)
+
+    log = commands.add_parser("log", help="Record time by hand: 1h30, 90m, 09:00-10:30, 09:00-now")
+    log.add_argument("spec")
+    log.add_argument("--day", default="today", help="YYYY-MM-DD, today or yesterday")
+    log.add_argument("--task")
+    log.add_argument("--project")
+    log.add_argument("--title")
+    log.add_argument("--note")
+
+    task = commands.add_parser("task", help="Manage tasks").add_subparsers(
+        dest="action", required=True, parser_class=Parser
+    )
+    task_add = task.add_parser("add", help="Create a task without time")
+    task_add.add_argument("--project", required=True)
+    task_add.add_argument("--title", required=True)
+    task_add.add_argument("--ref")
+
+    listing = commands.add_parser("list", help="List tasks")
+    listing.add_argument("--open", action="store_true")
+    listing.add_argument("--project")
+    commands.add_parser("show", help="Show a task and its intervals").add_argument("task_id")
+    edit = commands.add_parser("edit", help="Change a task")
     edit.add_argument("task_id")
-    for name in ("title", "description", "notes"):
-        edit.add_argument(f"--{name}")
-    edit.add_argument("--status", choices=STATUSES)
-    tags = edit.add_mutually_exclusive_group()
-    tags.add_argument("--tag", action="append")
-    tags.add_argument("--clear-tags", action="store_true")
-    edit.add_argument("--ref", nargs=2, metavar=("SYSTEM", "REFERENCE"))
-    edit.add_argument("--url")
-    for name in ("list", "report", "today", "export"):
-        command = commands.add_parser(name)
-        command.add_argument("--project")
-        command.add_argument("--status", choices=STATUSES)
-        command.add_argument("--tag")
-        if name in ("report", "today"):
-            command.add_argument("--timezone", default="UTC", help="IANA timezone; default UTC")
-        if name == "report":
-            command.add_argument("--from", dest="date_from", metavar="YYYY-MM-DD")
-            command.add_argument("--to", dest="date_to", metavar="YYYY-MM-DD")
-        if name == "export":
-            command.add_argument("--format", choices=("json", "csv"), required=True)
-            command.add_argument("--output", type=Path, help="Create a new file; never overwrite")
+    edit.add_argument("--title")
+    edit.add_argument("--ref", help="Tracker key; empty string clears it")
+    status = edit.add_mutually_exclusive_group()
+    status.add_argument("--done", action="store_true")
+    status.add_argument("--open", action="store_true")
+
+    assign = commands.add_parser("assign", help="Bind a chat to a task or rename its task")
+    assign.add_argument("--session", required=True, help="AGENT:ID, as shown in the chat")
+    assign.add_argument("--task")
+    assign.add_argument("--title")
+    assign.add_argument("--ref")
+    assign.add_argument("--project")
+
+    mapping = commands.add_parser("map", help="Map a directory to a project, or to ignore")
+    mapping.add_argument("path")
+    mapping.add_argument("target", metavar="PROJECT|ignore")
+    commands.add_parser("inbox", help="Time from unmapped directories")
+    ignore = commands.add_parser("ignore", help="Stop tracking a chat and discard its time")
+    ignore.add_argument("--session", required=True)
+
+    intervals = commands.add_parser("intervals", help="List raw intervals (default: today)")
+    period(intervals)
+    move = commands.add_parser("move", help="Move an interval, or a whole chat, to a task")
+    move.add_argument("interval", nargs="?")
+    move.add_argument("--session")
+    move.add_argument("--task", required=True)
+    commands.add_parser("rm", help="Delete an interval").add_argument("interval")
+
+    rep = commands.add_parser("report", help="Billable entries per day and task (default: today)")
+    period(rep)
+    rep.add_argument("--round", help="Round each entry to the nearest step, for example 15m")
+    rep.add_argument("--format", choices=("table", "csv", "json"), default="table")
+
+    commands.add_parser("projects", help="List projects")
+    project = commands.add_parser("project", help="Manage projects").add_subparsers(
+        dest="action", required=True, parser_class=Parser
+    )
+    project.add_parser("add", help="Register a project").add_argument("name")
+
+    setup = commands.add_parser("setup", help="Install hooks for Claude Code and Codex")
+    setup.add_argument("--yes", action="store_true", help="Apply without asking")
+    setup.add_argument("--dry-run", action="store_true", help="Only show the changes")
+    setup.add_argument("--uninstall", action="store_true", help="Remove WorkLog hooks")
+    commands.add_parser("doctor", help="Check hooks, ledger and pending events")
     return root
 
 
 def normalize(argv: list[str]) -> list[str]:
-    """Move only known global options; preserve values of command options verbatim."""
+    """Accept --json and --db anywhere by moving them before the subcommand."""
     global_args: list[str] = []
-    remaining: list[str] = []
-    arities = {
-        "--project": 1,
-        "--title": 1,
-        "--tag": 1,
-        "--description": 1,
-        "--alias": 1,
-        "--metadata": 1,
-        "--notes": 1,
-        "--status": 1,
-        "--ref": 2,
-        "--url": 1,
-        "--timezone": 1,
-        "--from": 1,
-        "--to": 1,
-        "--format": 1,
-        "--output": 1,
-    }
-    i = 0
-    while i < len(argv):
-        arg = argv[i]
-        if arg == "--":
-            remaining.extend(argv[i:])
-            break
-        if arg == "--json" or arg.startswith("--db="):
-            global_args.append(arg)
-        elif arg == "--db":
-            if i + 1 >= len(argv):
-                raise WorklogError("--db requires a path", "usage_error")
-            global_args.extend(argv[i : i + 2])
-            i += 1
+    rest: list[str] = []
+    index = 0
+    while index < len(argv):
+        item = argv[index]
+        if item == "--json":
+            global_args.append(item)
+        elif item == "--db" and index + 1 < len(argv):
+            global_args += argv[index : index + 2]
+            index += 1
+        elif item.startswith("--db="):
+            global_args.append(item)
+        elif item in VALUE_OPTIONS and index + 1 < len(argv):
+            rest += argv[index : index + 2]
+            index += 1
         else:
-            remaining.append(arg)
-            count = arities.get(arg, 0)
-            remaining.extend(argv[i + 1 : i + 1 + count])
-            i += count
-        i += 1
-    return global_args + remaining
+            rest.append(item)
+        index += 1
+    return global_args + rest
+
+
+def zone(name: str | None) -> tzinfo | None:
+    if name is None:
+        return None
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise WorklogError(f"Unknown timezone {name!r}") from exc
+
+
+def days(args: argparse.Namespace, tz: tzinfo | None) -> tuple[date, date]:
+    now = utcnow()
+    today = to_local(now, tz).date()
+    if args.start or args.end:
+        if args.today or args.yesterday or args.week:
+            raise WorklogError("Use either --from/--to or a shortcut", "usage_error")
+        start = parse_day(args.start, now, tz) if args.start else date.min
+        end = parse_day(args.end, now, tz) if args.end else today
+    elif args.yesterday:
+        start = end = today - timedelta(days=1)
+    elif args.week:
+        start = today - timedelta(days=today.weekday())
+        end = start + timedelta(days=6)
+    else:
+        start = end = today
+    if end < start:
+        raise WorklogError("--to must not precede --from")
+    return start, end
+
+
+def log_range(spec: str, day_text: str) -> tuple[datetime, datetime]:
+    now = utcnow()
+    day = parse_day(day_text, now, None)
+    if "-" in spec:
+        left, _, right = spec.partition("-")
+        start = local_moment(day, parse_clock(left), None)
+        if right.strip() == "now":
+            if day != to_local(now, None).date():
+                raise WorklogError("'now' can only be used for today")
+            end = now
+        else:
+            end = local_moment(day, parse_clock(right), None)
+        if end <= start:
+            raise WorklogError("End must be after start; split intervals that cross midnight")
+        return start, end
+    seconds = parse_duration(spec)
+    if day == to_local(now, None).date():
+        return now - timedelta(seconds=seconds), now
+    start = local_moment(day, time(9), None)
+    return start, start + timedelta(seconds=seconds)
+
+
+def doctor(db: Path) -> dict[str, Any]:
+    checks = []
+    for target in installer.targets():
+        if not target.home.is_dir():
+            checks.append({"name": f"{target.agent} hooks", "ok": True, "detail": "not installed"})
+            continue
+        try:
+            complete, command = installer.installed(target.agent)
+        except WorklogError as exc:
+            checks.append({"name": f"{target.agent} hooks", "ok": False, "detail": str(exc)})
+            continue
+        detail = "installed" if complete else "missing; run worklog setup"
+        checks.append({"name": f"{target.agent} hooks", "ok": complete, "detail": detail})
+        if command:
+            path = command.split(" -m ")[0].strip("'")
+            reachable = os.access(path, os.X_OK)
+            checks.append(
+                {
+                    "name": f"{target.agent} hook command",
+                    "ok": reachable,
+                    "detail": command if reachable else f"not executable: {path}",
+                }
+            )
+    try:
+        Ledger(db, config.load()).close()
+        checks.append({"name": "ledger", "ok": True, "detail": str(db)})
+    except (WorklogError, sqlite3.Error, OSError) as exc:
+        checks.append({"name": "ledger", "ok": False, "detail": str(exc)})
+    waiting = spool.pending()
+    checks.append(
+        {
+            "name": "pending events",
+            "ok": waiting == 0,
+            "detail": f"{waiting} not yet in the ledger" if waiting else "none",
+        }
+    )
+    errors = spool.errors()
+    checks.append(
+        {
+            "name": "hook errors",
+            "ok": not errors,
+            "detail": f"{len(errors)} in {spool.error_log()}; last: {errors[-1]}"
+            if errors
+            else "none",
+        }
+    )
+    return {"ok": all(c["ok"] for c in checks), "checks": checks}
+
+
+def setup(args: argparse.Namespace, json_mode: bool) -> dict[str, Any]:
+    changes = installer.plan(args.uninstall)
+    pending = [c for c in changes if c["diff"]]
+    if not args.dry_run and pending and not args.yes:
+        if json_mode or not sys.stdin.isatty():
+            raise WorklogError("Review with --dry-run, then apply with --yes", "usage_error")
+        for change in pending:
+            print(change["diff"])
+        if input("Apply these changes? [y/N] ").strip().lower() not in ("y", "yes"):
+            return {"applied": [], "changes": [], "cancelled": True}
+    applied = [] if args.dry_run else installer.apply(pending)
+    return {
+        "applied": applied,
+        "changes": [{"agent": c["agent"], "file": c["file"], "diff": c["diff"]} for c in pending],
+        "cancelled": False,
+        "dry_run": bool(args.dry_run),
+    }
 
 
 def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
     command = args.command
-    if command == "project":
-        try:
-            metadata = json.loads(args.metadata)
-        except ValueError as exc:
-            raise WorklogError("--metadata must be a JSON object") from exc
-        if not isinstance(metadata, dict):
-            raise WorklogError("--metadata must be a JSON object")
-        return ledger.add_project(args.name, args.alias, metadata)
-    if command == "projects":
-        return ledger.projects()
-    if command in ("start", "task"):
-        task_id = getattr(args, "task_id", None)
-        if task_id:
-            if any(v is not None for v in (args.project, args.title, args.tag, args.description)):
-                raise WorklogError("Use edit to change an existing task; start ID only resumes")
-            return ledger.start(task_id)
-        config = resolve(args.project, args.tag)
-        if not config.project:
-            raise WorklogError("Project required: use --project, .worklog.toml or global config")
-        if command == "task":
-            return ledger.add_task(
-                config.project, args.title, list(config.tags), args.description or ""
-            )
-        return ledger.start(
-            None, config.project, args.title, list(config.tags), args.description or ""
+    if command == "log":
+        start, end = log_range(args.spec, args.day)
+        return ledger.log(
+            start, end, task_id=args.task, project=args.project, title=args.title, note=args.note
         )
-    if command in ("resume", "switch"):
-        return ledger.start(args.task_id, switch=command == "switch")
-    if command == "stop":
-        return ledger.stop()
-    if command == "status":
-        return ledger.status()
+    if command == "task":
+        return ledger.add_task(args.project, args.title, args.ref)
+    if command == "list":
+        return ledger.tasks(open_only=args.open, project=args.project)
     if command == "show":
         return ledger.show(args.task_id)
-    if command == "complete":
-        return ledger.edit(args.task_id, status="done")
     if command == "edit":
-        if args.url and not args.ref:
-            raise WorklogError("--url requires --ref SYSTEM REFERENCE")
-        reference = (args.ref[0], args.ref[1], args.url) if args.ref else None
-        return ledger.edit(
-            args.task_id,
-            title=args.title,
-            description=args.description,
-            notes=args.notes,
-            status=args.status,
-            tags=[] if args.clear_tags else args.tag,
-            reference=reference,
+        status = "done" if args.done else "open" if args.open else None
+        return ledger.edit(args.task_id, title=args.title, ref=args.ref, status=status)
+    if command == "assign":
+        return ledger.assign(
+            args.session, task_id=args.task, title=args.title, ref=args.ref, project=args.project
         )
-    tasks = ledger.tasks(args.project, args.status, args.tag)
-    if command in ("report", "today"):
-        now = ledger.clock()
-        if command == "today":
-            try:
-                today = now.astimezone(ZoneInfo(args.timezone)).date().isoformat()
-            except (ZoneInfoNotFoundError, ValueError) as exc:
-                raise WorklogError(f"Unknown timezone {args.timezone}") from exc
-            return report(tasks, today, today, args.timezone, now)
-        return report(tasks, args.date_from, args.date_to, args.timezone, now)
-    if command == "export":
-        return {"projects": ledger.projects(), "tasks": tasks, "exported_at": ledger.now()}
-    return tasks
+    if command == "map":
+        target = args.target.strip()
+        if not target or target == config.INBOX:
+            raise WorklogError("Map to a project name or to ignore")
+        settings = config.load()
+        key = config.display_path(config.normalize_path(args.path))
+        settings.paths[key] = target
+        result = ledger.remap(args.path, target)
+        config.save(settings)
+        return {"path": key, "target": target, **result}
+    if command == "inbox":
+        return ledger.inbox()
+    if command == "ignore":
+        return ledger.ignore(args.session)
+    if command == "intervals":
+        tz = zone(args.timezone)
+        first, last = days(args, tz)
+        return ledger.intervals(
+            local_moment(max(first, date(1970, 1, 2)), time(0), tz),
+            local_moment(min(last, date(9998, 12, 30)) + timedelta(days=1), time(0), tz),
+        )
+    if command == "move":
+        if (args.interval is None) == (args.session is None):
+            raise WorklogError("Give an interval ID or --session", "usage_error")
+        if args.session:
+            return ledger.assign(args.session, task_id=args.task)
+        return ledger.move(args.interval, args.task)
+    if command == "rm":
+        removed = ledger.remove(args.interval)
+        began = to_local(parse_iso(removed["started_at"]), None)
+        finished = to_local(parse_iso(removed["ended_at"]), None)
+        recreate = (
+            f"worklog log {began:%H:%M:%S}-{finished:%H:%M:%S} --day {began:%Y-%m-%d} "
+            f"--task {removed['task_id']}"
+        )
+        if removed["note"]:
+            recreate += " --note " + json.dumps(removed["note"], ensure_ascii=False)
+        return {**removed, "recreate": recreate}
+    if command == "report":
+        tz = zone(args.timezone)
+        first, last = days(args, tz)
+        step = parse_duration(args.round) if args.round else None
+        return report(ledger, first, last, tz, step)
+    if command == "projects":
+        return ledger.projects()
+    if command == "project":
+        return ledger.add_project(args.name)
+    raise WorklogError(f"Unknown command {command}", "usage_error")
 
 
-def duration(value: float) -> str:
-    total = int(value)
-    return f"{total // 3600:02d}:{total // 60 % 60:02d}:{total % 60:02d}"
-
-
-def task_summary(task: dict[str, Any]) -> str:
+def interval_line(i: dict[str, Any]) -> str:
+    start = to_local(parse_iso(i["started_at"]), None)
+    end = to_local(parse_iso(i["ended_at"]), None)
+    note = f"  {i['note']}" if i["note"] else ""
+    worked = human_duration(i["duration_seconds"])
     return (
-        f"{task['id']}  {task['project']}  [{task['status']}]  "
-        f"{duration(task['duration_seconds'])}  {task['title']}"
+        f"{i['id'][:8]}  {start:%Y-%m-%d %H:%M}-{end:%H:%M}  {worked}"
+        f"  {i['task_id']}  {i['source']}{note}"
     )
 
 
-def human(command: str, data: Any) -> str:
-    if command == "status":
-        if not data["active"]:
-            return "No active session."
-        task = data["task"]
-        session = task["sessions"][-1]
+def task_line(t: dict[str, Any]) -> str:
+    ref = f" [{t['ref']}]" if t["ref"] else ""
+    return (
+        f"{t['id']}  {t['status']:<4}  {t['project']}{ref}  {t['title']}  "
+        f"{human_duration(t['duration_seconds'])}"
+    )
+
+
+def human(args: argparse.Namespace, data: Any) -> str:
+    command = args.command
+    if command == "log":
+        return f"Logged {human_duration(data['duration_seconds'])} on {data['task_id']}"
+    if command in ("task", "edit"):
+        return task_line(data)
+    if command == "list":
+        return "\n".join(task_line(t) for t in data) or "No tasks."
+    if command == "show":
+        lines = [task_line(data)]
+        lines += [f"  {interval_line(i)}" for i in data["intervals"]]
+        lines += [f"  chat {s}" for s in data["sessions"]]
+        return "\n".join(lines)
+    if command in ("assign", "move") and "session" in data and "task_id" in data:
+        if command == "move" and "cwd" not in data:
+            return f"Moved {data['id'][:8]} to {data['task_id']}"
+        return f"Chat {data['session']} → {data['task_id']} ({data['project']}): {data['title']}"
+    if command == "move":
+        return f"Moved {data['id'][:8]} to {data['task_id']}"
+    if command == "map":
+        return f"Mapped {data['path']} → {data['target']}; moved {data['moved_sessions']} chats"
+    if command == "inbox":
         return (
-            f"● {task_summary(task)}\nStarted: {session['started_at']}\n"
-            f"Elapsed: {duration(session['duration_seconds'])}"
+            "\n".join(
+                f"{i['session']}  {i['cwd']}  {human_duration(i['duration_seconds'])}" for i in data
+            )
+            or "Inbox is empty."
         )
-    if command == "stop":
-        if not data["stopped"]:
-            return "No active session."
-        return (
-            f"Stopped {data['task']['id']}\n"
-            f"Session: {duration(data['session']['duration_seconds'])}\n"
-            f"Total task time: {duration(data['task']['duration_seconds'])}"
-        )
-    if command in ("report", "today"):
-        lines = [
-            f"{r['task_id']}  {r['project']}  {duration(r['duration_seconds'])}  {r['title']}"
-            for r in data["tasks"]
-        ]
-        return "\n".join(
-            [*lines, f"Total: {duration(data['duration_seconds'])} ({data['timezone']})"]
-        )
+    if command == "ignore":
+        return f"Ignoring {data['session']}; removed {data['removed_intervals']} intervals"
+    if command == "intervals":
+        return "\n".join(interval_line(i) for i in data) or "No intervals."
+    if command == "rm":
+        return f"Removed {data['id'][:8]}. To restore it:\n  {data['recreate']}"
     if command == "projects":
         return (
-            "\n".join(f"{p['name']}  aliases: {', '.join(p['aliases']) or '-'}" for p in data)
+            "\n".join(f"{p['name']}  {p['open']} open / {p['tasks']} tasks" for p in data)
             or "No projects."
         )
     if command == "project":
         return f"Added project {data['name']}"
-    if command == "list":
-        return "\n".join(task_summary(t) for t in data) or "No tasks."
-    if command == "show":
-        lines = [
-            task_summary(data),
-            f"Description: {data['description']}",
-            f"Notes: {data['notes']}",
-            f"Tags: {', '.join(data['tags'])}",
-        ]
-        lines.extend(
-            f"Session {s['id']}: {s['started_at']} → {s['ended_at'] or 'running'} "
-            f"({duration(s['duration_seconds'])})"
-            for s in data["sessions"]
+    if command == "doctor":
+        return "\n".join(
+            f"{'ok  ' if c['ok'] else 'FAIL'}  {c['name']}: {c['detail']}" for c in data["checks"]
         )
-        lines.extend(
-            f"Reference: {r['system']} {r['reference']} {r['url'] or ''}"
-            for r in data["external_references"]
+    if command == "setup":
+        if data["cancelled"]:
+            return "Cancelled; nothing changed."
+        if data["dry_run"]:
+            return "\n".join(c["diff"] for c in data["changes"]) or "Hooks are up to date."
+        return "\n".join(f"Updated {path}" for path in data["applied"]) or "Hooks are up to date."
+    return json.dumps(data)
+
+
+def envelope(data: Any) -> str:
+    return json.dumps({"schema_version": 1, "data": data}, ensure_ascii=False, indent=2) + "\n"
+
+
+def warn_pending(json_mode: bool) -> None:
+    waiting = spool.pending()
+    if waiting and not json_mode:
+        print(
+            f"Warning: {waiting} hook events not yet recorded; run worklog doctor", file=sys.stderr
         )
-        return "\n".join(lines)
-    prefix = {
-        "start": "Started",
-        "resume": "Resumed",
-        "switch": "Started",
-        "task": "Created",
-        "complete": "Completed",
-        "edit": "Updated",
-    }[command]
-    result = f"{prefix} {task_summary(data)}"
-    if command in ("start", "resume", "switch"):
-        result += f"\nStarted: {data['sessions'][-1]['started_at']}"
-    return result
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
+    db = Path(os.environ.get("WORKLOG_DB") or config.default_db()).expanduser()
+    if raw[:1] == ["hook"]:
+        kind = raw[1] if len(raw) > 1 else ""
+        agent = raw[3] if len(raw) > 3 and raw[2] == "--agent" else ""
+        return hooks.main(kind, agent, db)
     json_mode = "--json" in raw
     ledger: Ledger | None = None
     try:
         args = parser().parse_args(normalize(raw))
         json_mode = args.json
-        if args.command == "export" and args.json and args.format != "json":
-            raise WorklogError("--json cannot be combined with --format csv")
-        path = Path(args.db or os.environ.get("WORKLOG_DB") or default_db()).expanduser()
-        ledger = Ledger(path)
-        read_only = args.command in {
-            "status",
-            "projects",
-            "list",
-            "show",
-            "report",
-            "today",
-            "export",
-        }
-        if read_only:
-            with ledger.transaction(write=False):
-                data = dispatch(args, ledger)
+        if args.db:
+            db = Path(args.db).expanduser()
+        if args.command == "setup":
+            data: Any = setup(args, json_mode)
+        elif args.command == "doctor":
+            data = doctor(db)
         else:
-            data = dispatch(args, ledger)
-        if args.command == "export":
-            content = json_text(data) if args.format == "json" else csv_text(data["tasks"])
-            if args.output:
-                with args.output.open("x", encoding="utf-8", newline="") as handle:
-                    handle.write(content)
+            ledger = Ledger(db, config.load())
+            ledger.drain()
+            if args.command in READ_ONLY:
+                with ledger.transaction(write=False):
+                    data = dispatch(args, ledger)
             else:
-                sys.stdout.write(content)
-        elif json_mode:
-            sys.stdout.write(json_text(data))
+                data = dispatch(args, ledger)
+            if args.command == "report":
+                warn_pending(json_mode)
+        if args.command == "report" and args.format == "csv":
+            sys.stdout.write(csv_text(data))
+        elif json_mode or (args.command == "report" and args.format == "json"):
+            sys.stdout.write(envelope(data))
+        elif args.command == "report":
+            print(table(data))
         else:
-            print(human(args.command, data))
+            print(human(args, data))
         return 0
     except (WorklogError, sqlite3.Error, OSError) as exc:
         code = exc.code if isinstance(exc, WorklogError) else "storage_error"
         if json_mode:
-            print(
-                json.dumps({"schema_version": 1, "error": {"code": code, "message": str(exc)}}),
-                file=sys.stderr,
-            )
+            error = {"schema_version": 1, "error": {"code": code, "message": str(exc)}}
+            print(json.dumps(error), file=sys.stderr)
         else:
             print(f"Error: {exc}", file=sys.stderr)
         return 2
