@@ -4,6 +4,11 @@ This project follows Semantic Versioning. Notable changes are recorded here.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-30
+
+- `doctor` records spooled heartbeats before counting pending events, so normal
+  agent activity is no longer reported as a failure.
+
 ## [0.2.0] - 2026-09-30
 
 Rewritten around hooks; not compatible with 0.1 (see docs/design.md).

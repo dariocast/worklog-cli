@@ -222,7 +222,12 @@ def doctor(db: Path) -> dict[str, Any]:
                 }
             )
     try:
-        Ledger(db, config.load()).close()
+        ledger = Ledger(db, config.load())
+        try:
+            # Heartbeats are always spooled; only events left after a drain are stuck.
+            ledger.drain()
+        finally:
+            ledger.close()
         checks.append({"name": "ledger", "ok": True, "detail": str(db)})
     except (WorklogError, sqlite3.Error, OSError) as exc:
         checks.append({"name": "ledger", "ok": False, "detail": str(exc)})

@@ -75,6 +75,13 @@ def test_hooks_never_fail_or_print_on_errors(isolated):
     assert any(c["name"] == "hook errors" and not c["ok"] for c in doctor["checks"])
 
 
+def test_doctor_does_not_report_normal_heartbeats_as_pending(isolated):
+    hook("prompt", "s", isolated / "somewhere")
+    hook("activity", "s", isolated / "somewhere")
+    checks = {c["name"]: c for c in data(run("doctor", "--json"))["checks"]}
+    assert checks["pending events"]["ok"], checks["pending events"]
+
+
 def test_unmapped_chat_lands_in_inbox(isolated):
     hook("prompt", "s", isolated / "somewhere")
     inbox = data(run("inbox", "--json"))
