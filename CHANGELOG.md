@@ -4,6 +4,15 @@ This project follows Semantic Versioning. Notable changes are recorded here.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-30
+
+- Make the shared agent rule directly importable as active instructions.
+- Require consent before analysis, debugging, implementation, or review begins;
+  retain consent/refusal for follow-ups and never infer it from a visited directory.
+- Clarify project selection across workspaces and activities without a repository.
+- Document rule updates and manual agent acceptance checks; no enforcement hook
+  or guarantee of model adherence is introduced.
+
 - Use fictional examples and clarify that agents must never infer project defaults
   from documentation.
 

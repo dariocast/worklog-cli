@@ -88,7 +88,7 @@ def test_errors_and_global_positions(cli, tmp_path):
     cli("--json", "project", "add", "other", "--db", other)
     assert len(data(cli("projects", "--db=" + other, "--json"))) == 1
     assert data(cli("projects", "--json")) == []
-    assert cli("--version").stdout.strip() == "WorkLog CLI 0.1.0"
+    assert cli("--version").stdout.strip() == "WorkLog CLI 0.1.1"
     assert "export" in cli("--help").stdout
 
 
