@@ -38,6 +38,7 @@ are raw.
 | map | `{path, target, moved_sessions}` |
 | inbox | `{session, cwd, task_id, duration_seconds}[]` |
 | ignore | `{session, removed_intervals}` |
+| task rm | `{id, project, title, ref, duration_seconds, removed_intervals, released_sessions}` |
 | intervals | Interval[] |
 | report | `{from, to, timezone, rounding_seconds, entries: ReportEntry[], duration_seconds}` |
 | projects | `{name, tasks, open}[]` |

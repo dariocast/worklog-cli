@@ -70,6 +70,9 @@ def parser() -> Parser:
     task_add.add_argument("--project", required=True)
     task_add.add_argument("--title", required=True)
     task_add.add_argument("--ref")
+    task_rm = task.add_parser("rm", help="Delete a task and its intervals")
+    task_rm.add_argument("task_id")
+    task_rm.add_argument("--force", action="store_true", help="Also if it has recorded time")
 
     listing = commands.add_parser("list", help="List tasks")
     listing.add_argument("--open", action="store_true")
@@ -278,6 +281,8 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
         return ledger.log(
             start, end, task_id=args.task, project=args.project, title=args.title, note=args.note
         )
+    if command == "task" and args.action == "rm":
+        return ledger.remove_task(args.task_id, force=args.force)
     if command == "task":
         return ledger.add_task(args.project, args.title, args.ref)
     if command == "list":
@@ -364,6 +369,11 @@ def human(args: argparse.Namespace, data: Any) -> str:
     command = args.command
     if command == "log":
         return f"Logged {human_duration(data['duration_seconds'])} on {data['task_id']}"
+    if command == "task" and args.action == "rm":
+        return (
+            f"Removed {data['id']} ({human_duration(data['duration_seconds'])}, "
+            f"{data['removed_intervals']} intervals)"
+        )
     if command in ("task", "edit"):
         return task_line(data)
     if command == "list":

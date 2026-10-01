@@ -195,3 +195,26 @@ def test_old_ledger_is_rejected(tmp_path):
     connection.close()
     with pytest.raises(WorklogError, match="0.1 ledger"):
         Ledger(path)
+
+
+def test_remove_empty_task_releases_its_chat(ledger, tmp_path):
+    prompt(ledger, tmp_path / "work", ts("09:00"))  # chat opened, no activity
+    task = only_task(ledger)
+    removed = ledger.remove_task(task["id"])
+    assert removed["released_sessions"] == ["claude:s1"]
+    assert removed["removed_intervals"] == 1
+    assert ledger.tasks() == []
+    assert "[WorkLog]" in prompt(ledger, tmp_path / "work", ts("10:00"))  # tracked anew
+    assert only_task(ledger)["id"] != task["id"]
+
+
+def test_remove_task_with_time_requires_force(ledger):
+    ledger.add_project("example-project")
+    logged = ledger.log(at("09:00"), at("10:00"), project="example-project", title="Meeting")
+    with pytest.raises(WorklogError, match="--force") as error:
+        ledger.remove_task(logged["task_id"])
+    assert error.value.code == "conflict"
+    assert len(ledger.show(logged["task_id"])["intervals"]) == 1
+    assert ledger.remove_task(logged["task_id"], force=True)["duration_seconds"] == 3600
+    with pytest.raises(WorklogError, match="Unknown task"):
+        ledger.show(logged["task_id"])

@@ -267,6 +267,25 @@ class Ledger:
                 self.db.execute("UPDATE tasks SET status = ? WHERE id = ?", (status, task_id))
         return self.show(task_id)
 
+    def remove_task(self, task_id: str, *, force: bool = False) -> dict[str, Any]:
+        """Delete a task with its intervals. Its chats are tracked anew on their next turn."""
+        with self.transaction():
+            task = self.show(task_id)
+            if task["duration_seconds"] > 0 and not force:
+                raise WorklogError(
+                    f"Task {task_id} has {task['duration_seconds']:.0f}s of recorded time; "
+                    "use --force to delete it",
+                    "conflict",
+                )
+            removed = self.db.execute("DELETE FROM intervals WHERE task_id = ?", (task_id,))
+            self.db.execute("DELETE FROM agent_sessions WHERE task_id = ?", (task_id,))
+            self.db.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        return {
+            **{k: task[k] for k in ("id", "project", "title", "ref", "duration_seconds")},
+            "removed_intervals": removed.rowcount,
+            "released_sessions": task["sessions"],
+        }
+
     def _drop_if_orphan(self, task_id: str | None) -> None:
         """Delete an automatically created task left without time or chats."""
         if task_id is None:

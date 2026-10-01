@@ -169,6 +169,7 @@ No interactive prompts except the `setup` confirmation.
 | --- | --- |
 | `log DURATION\|HH:MM-HH:MM\|HH:MM-now [--day D] (--task ID \| --project P --title T) [--note N]` | Record a closed interval by hand |
 | `task add --project P --title T [--ref R]` | Create a task without time |
+| `task rm ID [--force]` | Delete a task and its intervals; refuses recorded time without `--force`; its chats get a new task on their next turn |
 | `list [--open] [--project P]` | List tasks |
 | `show ID` | Task with intervals |
 | `edit ID [--title T] [--ref R] [--done \| --open]` | Change a task |

@@ -66,6 +66,7 @@ worklog inbox
 worklog intervals --today
 worklog move 3f2a9c1e --task ACT-20260930-002
 worklog rm 3f2a9c1e                      # prints the command to recreate it
+worklog task rm ACT-20260930-003         # --force if it has recorded time
 ```
 
 A report row shows the day, the tracker key (or the project when there is

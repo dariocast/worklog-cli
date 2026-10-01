@@ -178,3 +178,11 @@ def test_setup_refuses_invalid_settings(agent_homes):
     result = run("setup", "--yes", "--json", ok=False)
     assert json.loads(result.stderr)["error"]["code"] == "config_error"
     assert claude.read_text() == "{broken"
+
+
+def test_task_rm_command(isolated):
+    run("project", "add", "example-project")
+    task = data(run("task", "add", "--project", "example-project", "--title", "Empty", "--json"))
+    assert "Removed " + task["id"] in run("task", "rm", task["id"]).stdout
+    result = run("task", "rm", task["id"], "--json", ok=False)
+    assert json.loads(result.stderr)["error"]["code"] == "not_found"
