@@ -1,3 +1,3 @@
 """WorkLog CLI: a local task and session ledger."""
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"

@@ -4,6 +4,8 @@ This project follows Semantic Versioning. Notable changes are recorded here.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-01
+
 - Add `worklog task rm ID` to delete a task and its intervals, for example one
   created by a chat that was opened but never used. A task with recorded time
   requires `--force`; its chats are tracked on a new task if they continue.
