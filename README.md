@@ -60,8 +60,12 @@ worklog report --week                    # one row per day and task
 worklog report --from 2026-09-01 --to 2026-09-30 --round 15m --format csv
 worklog log 1h30 --project example-client --title "Planning meeting"
 worklog log 09:00-10:30 --day yesterday --task ACT-20260930-001 --note "Review"
-worklog list --open
+worklog add "Check the export format"     # note it for later, in the inbox
+worklog add "Fix crash" --project example-client --ref DEMO-123
+worklog list --open --unstarted          # planned work not started yet
 worklog edit ACT-20260930-001 --ref DEMO-123 --done
+worklog edit ACT-20260930-004 --project example-client --description "Asked in the call"
+worklog board                            # local web board: inbox, to do, in progress, done
 worklog inbox
 worklog intervals --today
 worklog move 3f2a9c1e --task ACT-20260930-002
@@ -77,6 +81,13 @@ none), the title, the duration and the notes:
 2026-09-30  example-client  CI configuration  2h10
 Total 3h30
 ```
+
+`worklog board` opens a page on `127.0.0.1` with four columns (Inbox, To do,
+In progress, Done) and a List view with time per project. Type in the field at
+the top to note something (`@project text` files it directly), drag cards to
+triage, reorder or close them, and click a card to edit it. A task is "in
+progress" only once it has recorded time, from a chat bound to it or from
+`worklog log`. The page loads nothing from the network and stops with Ctrl+C.
 
 Days use your system timezone unless `--timezone` is given. There is no rounding
 unless you ask for it, and no "already logged" state: your tracker remembers

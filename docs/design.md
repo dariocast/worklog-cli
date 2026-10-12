@@ -201,6 +201,185 @@ timezone unless `--timezone` is given. No rounding unless `--round` is given
 30/09  example-proj   CI configuration       2h10
 ```
 
+## Backlog and board (0.3)
+
+Status: implemented, to be released as 0.3.0. Everything above stays valid; this section adds to it.
+
+### Purpose
+
+Capture work to do later in a few seconds, during a call or while busy with
+something else, from the CLI, from an agent in any chat, or from a local web
+board; then triage it and start it in a chat whose time lands on the planned
+task. WorkLog stays a time ledger with a small backlog, not a project manager.
+
+Out of scope, now and later: due dates, reminders, priorities other than manual
+order, tags, assignees, subtasks, comments, attachments, sync with external
+trackers.
+
+### Model
+
+No new entity. A backlog item is a task without intervals.
+
+- A capture without a project goes to the reserved project `inbox`, which
+  already means "not yet attributed". The inbox therefore holds two kinds of
+  things to triage: captures, and time from unmapped directories.
+- Board columns are derived, never stored:
+
+| Column | Open tasks that are |
+| --- | --- |
+| Inbox | in project `inbox`, with or without time |
+| To do | in another project, without intervals |
+| In progress | in another project, with intervals |
+| Done | `done` (default: closed in the last 14 days) |
+
+Schema 3 adds three task columns:
+
+- `description`: optional free text (what to do, why, links). Named so to avoid
+  confusion with interval notes, which feed reports. It never appears in
+  reports.
+- `rank`: REAL, not null. Manual order, global across columns (a column shows
+  its tasks in rank order). New tasks get `min(rank) - 1`, so captures appear
+  at the top. Moving a task before another sets a rank between its neighbours;
+  ranks are renumbered in the same transaction when the gap gets too small.
+- `closed_at`: set when a task becomes `done`, cleared when it is reopened.
+
+Migration 2 → 3 runs in one transaction on first open: add the columns, set
+`rank` in `created_at` order, leave `closed_at` null for tasks already done.
+A 0.2 CLI rejects a schema 3 ledger as newer.
+
+### Transitions
+
+Columns change only as a consequence of a project, a status or the presence of
+intervals. Time is never created or deleted by the board.
+
+| From → to | Automatic | CLI / agent | Board |
+| --- | --- | --- | --- |
+| new → Inbox | chat in an unmapped directory (with time) | `add T` | capture field |
+| new → To do | | `add T --project P` | capture field with `@P` |
+| new → In progress | chat in a mapped directory | `log ... --project P --title T` | no |
+| Inbox → To do | | `edit --project P` (task without time) | drop on a project group |
+| Inbox → In progress | `map PATH P` for time from that directory; `assign --task ID` from a chat in a directory mapped to P | `assign --session S --task ID --project P`; `edit --project P` on a task with time | drop on a project group (task with time); it lands in In progress |
+| To do → In progress | | `assign --session S --task ID`; `log --task ID`; `move ... --task ID` | no: only time makes it in progress |
+| In progress → To do | when its last interval goes (`rm`, `move`, `ignore`) | same commands | no |
+| project → other project | | `edit --project P`; `assign --project P` | drop between project groups in To do; inline edit for any card |
+| any project → Inbox | | no: `inbox` is reserved | no |
+| open → Done | | `edit --done` | drop on Done |
+| Done → open (derived column) | agent turn on a bound chat | `edit --open` | drag out of Done (reopen only, project unchanged) |
+| open or done → deleted | provisional task left without time or chats | `task rm` (`--force` with time) | only tasks without time |
+| order | | `edit --before ID2`, `edit --after ID2`, `edit --top` | drag within a column |
+
+`map` writes configuration, so the board only shows the command and never runs
+it. A task never goes back to the inbox: a wrong project is fixed by moving the
+task to the right one. Reopening keeps the task's project; changing it is a
+separate action.
+
+When `assign --task ID` binds a chat to an inbox task without `--project`, and
+the chat's directory is mapped to a project, the task moves to that project in
+the same transaction. From an unmapped directory it stays in the inbox. An
+explicit `--project` always wins.
+
+### Done tasks and new time
+
+Done means "no longer expected to receive time". A new **agent turn** on a done
+task reopens it (`status = open`, `closed_at = null`) in the same transaction,
+because the work is evidently not over. Heartbeats do not reopen. Manual
+`log --task` on a done task keeps it done (backfilling forgotten time is
+normal). To stop a chat from adding time
+to a closed task, use `worklog ignore --session` or bind the chat elsewhere.
+
+### Capture
+
+- CLI: `worklog add "text"`, alias of `task add TITLE`. `task add` accepts the
+  title as positional argument (`--title` keeps working); `--project` becomes
+  optional and defaults to `inbox`; new `--description`.
+- Agent: when the user says to note something for later, the agent runs
+  `worklog add "..." [--project P]`. This never changes the chat's own task.
+  The injected note gains one static line saying so, and tells the agent that a
+  chat starting planned work can find it with
+  `worklog list --open --unstarted --project P --json` and bind it with
+  `assign --task ID`. The note does not list backlog items, so it does not
+  change, and is not re-injected, whenever one is added.
+- Board: a capture field always focused at the top; Enter adds to the inbox,
+  a leading `@project ` adds to that project.
+
+### CLI changes
+
+| Command | Change |
+| --- | --- |
+| `add TITLE [--project P] [--ref R] [--description D]` | New, alias of `task add` |
+| `task add [TITLE] [--title T] [--project P] [--ref R] [--description D]` | Positional title, optional project, description |
+| `edit ID [--project P] [--description D] [--before ID2 \| --after ID2 \| --top]` | Change project (not to a reserved one), description, order |
+| `list [--unstarted \| --started]` | Filter by presence of intervals |
+| `board [--port N] [--no-open]` | Serve the board until Ctrl+C |
+
+`edit --done` sets `closed_at`; `edit --open` clears it. `edit --project` on a
+task bound to chats moves only that task; future chats from an unmapped
+directory still go to the inbox until `worklog map`.
+
+### Board
+
+`worklog board` serves a single page on `127.0.0.1` (random free port unless
+`--port`), opens it in the default browser unless `--no-open`, and runs in the
+foreground until interrupted. Standard library only (`http.server`); HTML, CSS
+and JavaScript are package data, written by hand, no build step, no external
+resources of any kind. The look follows shadcn/ui (zinc theme, light and
+dark) through a hand-written `ui.css` of tokens and component classes;
+`board.css` holds only the board layout.
+
+Interactions:
+
+- Add from the capture field; click a card to edit title, reference,
+  description and project inline.
+- Drag and drop and inline edits follow the transition table above.
+- A List view shows the same tasks as a table (project, task with reference,
+  status, time), sortable by column, with a subtotal per project when sorted
+  by project and a grand total. Clicking a row opens the same inline editor.
+  The chosen view is remembered in the browser only.
+- In progress and Inbox cards show worked time; inbox cards with time show their
+  directory and the `worklog map` command that would attribute it.
+- The page refreshes every 15 seconds while visible, so chats started meanwhile
+  appear; each refresh drains the spool like any other command.
+
+Security, since the page can change the ledger:
+
+- Bind to `127.0.0.1` only; reject requests whose `Host` is not
+  `127.0.0.1:PORT` or `localhost:PORT`.
+- A random token per run is placed in the URL fragment (never sent by the
+  browser as part of a request URL or Referer); the page sends it in an
+  `X-Worklog-Token` header. API requests without it are rejected. The custom
+  header also forces a CORS preflight, which the server never approves.
+- `Content-Security-Policy: default-src 'self'`; no inline script.
+- No request or ledger content is logged.
+
+Implementation: the server holds no state besides the token. Each API request
+opens the ledger, runs one ledger method (the same ones the CLI uses, so the
+same validation and transactions) and closes it, so hooks and the CLI are never
+blocked by an idle board. API responses use the JSON envelope of
+[json-api.md](json-api.md).
+
+| Method and path | Ledger operation |
+| --- | --- |
+| `GET /api/board` | Open tasks, recent done tasks, projects |
+| `POST /api/tasks` | `add` |
+| `PATCH /api/tasks/ID` | `edit` (title, ref, description, project, status, before, after, top) |
+| `DELETE /api/tasks/ID` | `task rm` without force |
+
+### JSON API
+
+Within schema version 1 (only fields are added): Task gains `description:
+string|null`, `rank: number`, `started: boolean` and `closed_at: string|null`.
+`inbox --json` keeps its shape (unassigned time); captures are listed with
+`list --project inbox --unstarted --json`. `board` has no JSON output.
+
+### Validation additions
+
+Migration from a populated schema 2 ledger; rank insertion, renumbering and
+`--before` across filters; reopening a done task on an agent turn but not on a
+heartbeat or manual log; derived columns at their boundaries (inbox task with
+time, task whose last interval is removed); board server tests on an ephemeral
+port for Host check, token, preflight rejection and each endpoint, with a
+temporary ledger. The page itself is checked manually in a browser.
+
 ## Setup
 
 `worklog setup` detects Claude Code and Codex, shows the exact diff of

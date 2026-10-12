@@ -21,7 +21,7 @@ from worklog_cli.errors import WorklogError
 from worklog_cli.timeline import Raw, spans, total_seconds
 from worklog_cli.timeutil import iso, parse_iso, to_local, utcnow
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 AGENTS = ("claude", "codex")
 SOURCES = (*AGENTS, "manual")
 SCHEMA = """
@@ -31,7 +31,8 @@ CREATE TABLE tasks (
  id TEXT PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id),
  title TEXT NOT NULL CHECK(length(trim(title)) > 0), ref TEXT,
  status TEXT NOT NULL CHECK(status IN ('open','done')),
- auto_title INTEGER NOT NULL DEFAULT 0 CHECK(auto_title IN (0,1)), created_at TEXT NOT NULL
+ auto_title INTEGER NOT NULL DEFAULT 0 CHECK(auto_title IN (0,1)), created_at TEXT NOT NULL,
+ description TEXT, rank REAL NOT NULL DEFAULT 0, closed_at TEXT
 );
 CREATE TABLE agent_sessions (
  agent TEXT NOT NULL, session_id TEXT NOT NULL, task_id TEXT REFERENCES tasks(id),
@@ -49,6 +50,16 @@ CREATE TABLE intervals (
 CREATE INDEX intervals_task ON intervals(task_id);
 CREATE INDEX intervals_session ON intervals(source, session_id, started_at);
 """
+# Schema 2 -> 3: description, manual order (newest first) and closing time.
+MIGRATE_3 = """
+ALTER TABLE tasks ADD COLUMN description TEXT;
+ALTER TABLE tasks ADD COLUMN rank REAL NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN closed_at TEXT;
+UPDATE tasks SET rank = (
+ SELECT count(*) FROM tasks newer WHERE (newer.created_at, newer.id) > (tasks.created_at, tasks.id)
+);
+"""
+MIN_GAP = 1e-6
 
 
 def parse_session(key: str) -> tuple[str, str]:
@@ -89,8 +100,8 @@ class Ledger:
                     )
                 if version > SCHEMA_VERSION:
                     raise WorklogError("Database schema is newer than this CLI", "schema_version")
-                if version == 0:
-                    for statement in SCHEMA.split(";"):
+                if version in (0, 2):
+                    for statement in (SCHEMA if version == 0 else MIGRATE_3).split(";"):
                         if statement.strip():
                             self.db.execute(statement)
                     self.db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -149,7 +160,15 @@ class Ledger:
 
     # Tasks
 
-    def _new_task(self, project: str, title: str, ref: str | None, *, auto: bool) -> str:
+    def _new_task(
+        self,
+        project: str,
+        title: str,
+        ref: str | None,
+        *,
+        auto: bool,
+        description: str | None = None,
+    ) -> str:
         project_id = self._project_id(project, create=project == INBOX)
         now = self.clock()
         day = to_local(now, None).strftime("%Y%m%d")
@@ -160,15 +179,34 @@ class Ledger:
         ).fetchone()
         task_id = f"ACT-{day}-{int(row[0]):03d}"
         self.db.execute(
-            "INSERT INTO tasks(id, project_id, title, ref, status, auto_title, created_at) "
-            "VALUES (?, ?, ?, ?, 'open', ?, ?)",
-            (task_id, project_id, nonempty(title, "Title"), ref or None, int(auto), iso(now)),
+            "INSERT INTO tasks(id, project_id, title, ref, status, auto_title, created_at, "
+            "description, rank) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, "
+            "(SELECT coalesce(min(rank), 1) - 1 FROM tasks))",
+            (
+                task_id,
+                project_id,
+                nonempty(title, "Title"),
+                (ref or "").strip() or None,
+                int(auto),
+                iso(now),
+                (description or "").strip() or None,
+            ),
         )
         return task_id
 
-    def add_task(self, project: str, title: str, ref: str | None = None) -> dict[str, Any]:
+    def add_task(
+        self,
+        project: str | None,
+        title: str,
+        ref: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a task without time. Without a project it is captured in the inbox."""
+        project = project.strip() if project is not None else INBOX
+        if project == IGNORE:
+            raise WorklogError(f"{project!r} is reserved")
         with self.transaction():
-            task_id = self._new_task(project, title, ref, auto=False)
+            task_id = self._new_task(project, title, ref, auto=False, description=description)
         return self.show(task_id)
 
     def _require_task(self, task_id: str) -> sqlite3.Row:
@@ -204,9 +242,10 @@ class Ledger:
         ]
 
     def _task_dicts(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
-        worked = spans(self.raws([r["id"] for r in rows]), self.idle) if rows else []
+        raws = self.raws([r["id"] for r in rows]) if rows else []
+        started = {raw.task_id for raw in raws}
         totals: dict[str, float] = {}
-        for span in worked:
+        for span in spans(raws, self.idle):
             totals[span.task_id] = totals.get(span.task_id, 0.0) + span.seconds
         return [
             {
@@ -218,14 +257,27 @@ class Ledger:
                 "provisional_title": bool(r["auto_title"]),
                 "created_at": r["created_at"],
                 "duration_seconds": round(totals.get(r["id"], 0.0), 6),
+                "description": r["description"],
+                "rank": r["rank"],
+                "started": r["id"] in started,
+                "closed_at": r["closed_at"],
             }
             for r in rows
         ]
 
-    def tasks(self, *, open_only: bool = False, project: str | None = None) -> list[dict[str, Any]]:
+    def tasks(
+        self,
+        *,
+        open_only: bool = False,
+        project: str | None = None,
+        started: bool | None = None,
+    ) -> list[dict[str, Any]]:
         clauses, params = [], []
         if open_only:
             clauses.append("t.status = 'open'")
+        if started is not None:
+            exists = "EXISTS (SELECT 1 FROM intervals i WHERE i.task_id = t.id)"
+            clauses.append(exists if started else f"NOT {exists}")
         if project is not None:
             self._project_id(project)
             clauses.append("p.name = ?")
@@ -250,8 +302,20 @@ class Ledger:
         return task
 
     def edit(
-        self, task_id: str, *, title: str | None, ref: str | None, status: str | None
+        self,
+        task_id: str,
+        *,
+        title: str | None = None,
+        ref: str | None = None,
+        status: str | None = None,
+        project: str | None = None,
+        description: str | None = None,
+        before: str | None = None,
+        after: str | None = None,
+        top: bool = False,
     ) -> dict[str, Any]:
+        if sum((before is not None, after is not None, top)) > 1:
+            raise WorklogError("Use only one of --before, --after and --top", "usage_error")
         with self.transaction():
             self._require_task(task_id)
             if title is not None:
@@ -264,8 +328,63 @@ class Ledger:
                     "UPDATE tasks SET ref = ? WHERE id = ?", (ref.strip() or None, task_id)
                 )
             if status is not None:
-                self.db.execute("UPDATE tasks SET status = ? WHERE id = ?", (status, task_id))
+                self._set_status(task_id, status)
+            if project is not None:
+                if project.strip() in RESERVED:
+                    raise WorklogError(f"{project.strip()!r} is reserved; choose a project")
+                self.db.execute(
+                    "UPDATE tasks SET project_id = ? WHERE id = ?",
+                    (self._project_id(project.strip()), task_id),
+                )
+            if description is not None:
+                self.db.execute(
+                    "UPDATE tasks SET description = ? WHERE id = ?",
+                    (description.strip() or None, task_id),
+                )
+            if top:
+                self.db.execute(
+                    "UPDATE tasks SET rank = (SELECT min(rank) - 1 FROM tasks) WHERE id = ?",
+                    (task_id,),
+                )
+            elif before is not None or after is not None:
+                self._place(task_id, before, after)
         return self.show(task_id)
+
+    def _set_status(self, task_id: str, status: str) -> None:
+        """Done sets the closing time once; reopening clears it."""
+        self.db.execute(
+            "UPDATE tasks SET closed_at = CASE WHEN ? = 'done' THEN "
+            "(CASE WHEN status = 'done' THEN closed_at ELSE ? END) END, status = ? WHERE id = ?",
+            (status, self.now(), status, task_id),
+        )
+
+    def _place(self, task_id: str, before: str | None, after: str | None) -> None:
+        """Move a task right before or after another one in the global manual order."""
+        anchor = before if before is not None else after
+        assert anchor is not None
+        if anchor == task_id:
+            raise WorklogError("A task cannot be placed relative to itself")
+        for attempt in range(2):
+            target = float(self._require_task(anchor)["rank"])
+            operator, order = ("<", "DESC") if before is not None else (">", "ASC")
+            row = self.db.execute(
+                f"SELECT rank FROM tasks WHERE rank {operator} ? AND id != ? "
+                f"ORDER BY rank {order} LIMIT 1",
+                (target, task_id),
+            ).fetchone()
+            step = -1.0 if before is not None else 1.0
+            neighbour = target + step if row is None else float(row[0])
+            if abs(neighbour - target) >= MIN_GAP or attempt:
+                rank = (target + neighbour) / 2
+                break
+            self._renumber()
+        self.db.execute("UPDATE tasks SET rank = ? WHERE id = ?", (rank, task_id))
+
+    def _renumber(self) -> None:
+        ids = [r[0] for r in self.db.execute("SELECT id FROM tasks ORDER BY rank, created_at, id")]
+        self.db.executemany(
+            "UPDATE tasks SET rank = ? WHERE id = ?", [(i, t) for i, t in enumerate(ids)]
+        )
 
     def remove_task(self, task_id: str, *, force: bool = False) -> dict[str, Any]:
         """Delete a task with its intervals. Its chats are tracked anew on their next turn."""
@@ -426,6 +545,12 @@ class Ledger:
                 session = self._open_session(agent, session_id, cwd, stamp)
             if session["ignored"]:
                 return None
+            # A new turn means the work is not over: a closed task is reopened.
+            self.db.execute(
+                "UPDATE tasks SET status = 'open', closed_at = NULL "
+                "WHERE id = ? AND status = 'done'",
+                (session["task_id"],),
+            )
             self.db.execute(
                 "INSERT INTO intervals(id, task_id, started_at, ended_at, source, session_id) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
@@ -520,6 +645,8 @@ class Ledger:
                 )
                 self._drop_if_orphan(current)
                 current = task_id
+                if project is None:
+                    self._attribute_from_directory(task_id, session["cwd"])
             if title is not None:
                 self.db.execute(
                     "UPDATE tasks SET title = ?, auto_title = 0 WHERE id = ?",
@@ -537,6 +664,17 @@ class Ledger:
                     (self._project_id(project), current),
                 )
         return self.session_info(agent, session_id)
+
+    def _attribute_from_directory(self, task_id: str, cwd: str) -> None:
+        """Move an inbox task to the project its chat's directory is mapped to, if any."""
+        target = self.config.resolve(cwd) if cwd else None
+        if target is None or target in RESERVED:
+            return
+        self.db.execute(
+            "UPDATE tasks SET project_id = ? WHERE id = ? AND project_id = "
+            "(SELECT id FROM projects WHERE name = ?)",
+            (self._project_id(target, create=True), task_id, INBOX),
+        )
 
     def ignore(self, key: str) -> dict[str, Any]:
         agent, session_id = parse_session(key)

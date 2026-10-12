@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>WorkLog board</title>
+<link rel="stylesheet" href="/ui.css">
+<link rel="stylesheet" href="/board.css">
+<script src="/board.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="brand-mark" aria-hidden="true">W</span>WorkLog</div>
+  <form id="capture" autocomplete="off">
+    <input id="capture-input" class="input input-lg" type="text" maxlength="500" autofocus
+           placeholder="Note something to do… “@project text” files it in a project"
+           aria-label="New task">
+    <span class="kbd" aria-hidden="true">/</span>
+  </form>
+  <div class="tabs-list views" role="tablist" aria-label="View">
+    <button type="button" class="tabs-trigger" role="tab" data-view="board">Board</button>
+    <button type="button" class="tabs-trigger" role="tab" data-view="list">List</button>
+  </div>
+</header>
+<main id="main" aria-live="polite"></main>
+<div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

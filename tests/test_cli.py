@@ -186,3 +186,28 @@ def test_task_rm_command(isolated):
     assert "Removed " + task["id"] in run("task", "rm", task["id"]).stdout
     result = run("task", "rm", task["id"], "--json", ok=False)
     assert json.loads(result.stderr)["error"]["code"] == "not_found"
+
+
+def test_capture_and_triage_from_the_cli(isolated):
+    first = data(run("add", "Check the export format", "--json"))
+    assert first["project"] == "inbox" and first["started"] is False
+    run("project", "add", "example-project")
+    second = data(
+        run("task", "add", "--title", "Plan the release", "--project", "example-project", "--json")
+    )
+    assert second["project"] == "example-project"
+    error = run("add", "Twice", "--title", "Twice", "--json", ok=False)
+    assert json.loads(error.stderr)["error"]["code"] == "usage_error"
+    moved = data(
+        run(
+            "edit", first["id"], "--project", "example-project", "--description", "From a call",
+            "--after", second["id"], "--json",
+        )
+    )  # fmt: skip
+    assert moved["project"] == "example-project" and moved["rank"] > second["rank"]
+    assert [t["id"] for t in data(run("list", "--unstarted", "--json"))] == [
+        first["id"],
+        second["id"],
+    ]
+    assert data(run("list", "--started", "--json")) == []
+    assert "Check the export format" in run("list", "--open").stdout

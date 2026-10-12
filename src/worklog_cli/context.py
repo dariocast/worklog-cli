@@ -18,8 +18,10 @@ def render(info: dict[str, Any]) -> str:
         lines.append(f"Task {task}, project {info['project']}, {title}{ref}.")
     lines += [
         f'When the activity is clear, run `worklog assign --session {session} --title "..."`'
-        " (add `--ref KEY` if a tracker key is known). If it continues an open task"
+        " (add `--ref KEY` if a tracker key is known). If it continues an open or planned task"
         f" (`worklog list --open --json`), use `worklog assign --session {session} --task ID`.",
+        'To note something for later, run `worklog add "..."` (add `--project P` if known);'
+        " it does not change this chat's task.",
         "Put the task ID in any handoff. If the user says not to track this chat, run "
         f"`worklog ignore --session {session}`. Do not otherwise mention WorkLog.",
     ]

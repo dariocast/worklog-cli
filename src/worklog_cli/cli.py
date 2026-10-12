@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from worklog_cli import __version__, config, hooks, installer, spool
+from worklog_cli import __version__, board, config, hooks, installer, spool
 from worklog_cli.errors import WorklogError
 from worklog_cli.ledger import Ledger
 from worklog_cli.reporting import csv_text, report, table
@@ -28,7 +28,8 @@ from worklog_cli.timeutil import (
 
 VALUE_OPTIONS = {
     "--db", "--title", "--project", "--task", "--ref", "--note", "--day", "--from", "--to",
-    "--timezone", "--round", "--format", "--session",
+    "--timezone", "--round", "--format", "--session", "--description", "--before", "--after",
+    "--port",
 }  # fmt: skip
 READ_ONLY = {"list", "show", "projects", "inbox", "intervals", "report"}
 
@@ -67,16 +68,19 @@ def parser() -> Parser:
         dest="action", required=True, parser_class=Parser
     )
     task_add = task.add_parser("add", help="Create a task without time")
-    task_add.add_argument("--project", required=True)
-    task_add.add_argument("--title", required=True)
-    task_add.add_argument("--ref")
+    new_task(task_add)
     task_rm = task.add_parser("rm", help="Delete a task and its intervals")
     task_rm.add_argument("task_id")
     task_rm.add_argument("--force", action="store_true", help="Also if it has recorded time")
 
+    new_task(commands.add_parser("add", help="Note a task for later (default: in the inbox)"))
+
     listing = commands.add_parser("list", help="List tasks")
     listing.add_argument("--open", action="store_true")
     listing.add_argument("--project")
+    begun = listing.add_mutually_exclusive_group()
+    begun.add_argument("--unstarted", action="store_true", help="Only tasks without time")
+    begun.add_argument("--started", action="store_true", help="Only tasks with time")
     commands.add_parser("show", help="Show a task and its intervals").add_argument("task_id")
     edit = commands.add_parser("edit", help="Change a task")
     edit.add_argument("task_id")
@@ -85,6 +89,12 @@ def parser() -> Parser:
     status = edit.add_mutually_exclusive_group()
     status.add_argument("--done", action="store_true")
     status.add_argument("--open", action="store_true")
+    edit.add_argument("--project", help="Move the task to another project")
+    edit.add_argument("--description", help="Free text; empty string clears it")
+    order = edit.add_mutually_exclusive_group()
+    order.add_argument("--before", metavar="TASK", help="Place right before another task")
+    order.add_argument("--after", metavar="TASK", help="Place right after another task")
+    order.add_argument("--top", action="store_true", help="Place first")
 
     assign = commands.add_parser("assign", help="Bind a chat to a task or rename its task")
     assign.add_argument("--session", required=True, help="AGENT:ID, as shown in the chat")
@@ -124,7 +134,24 @@ def parser() -> Parser:
     setup.add_argument("--dry-run", action="store_true", help="Only show the changes")
     setup.add_argument("--uninstall", action="store_true", help="Remove WorkLog hooks")
     commands.add_parser("doctor", help="Check hooks, ledger and pending events")
+    web = commands.add_parser("board", help="Open the local web board until Ctrl+C")
+    web.add_argument("--port", type=int, default=0, help="Default: a free port")
+    web.add_argument("--no-open", action="store_true", help="Do not open a browser")
     return root
+
+
+def new_task(command: argparse.ArgumentParser) -> None:
+    command.add_argument("title", nargs="?", metavar="TITLE")
+    command.add_argument("--title", dest="title_option", metavar="TITLE")
+    command.add_argument("--project", help="Default: inbox")
+    command.add_argument("--ref")
+    command.add_argument("--description")
+
+
+def task_title(args: argparse.Namespace) -> str:
+    if (args.title is None) == (args.title_option is None):
+        raise WorklogError("Give the title once, as argument or with --title", "usage_error")
+    return str(args.title if args.title is not None else args.title_option)
 
 
 def normalize(argv: list[str]) -> list[str]:
@@ -283,15 +310,26 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
         )
     if command == "task" and args.action == "rm":
         return ledger.remove_task(args.task_id, force=args.force)
-    if command == "task":
-        return ledger.add_task(args.project, args.title, args.ref)
+    if command in ("task", "add"):
+        return ledger.add_task(args.project, task_title(args), args.ref, args.description)
     if command == "list":
-        return ledger.tasks(open_only=args.open, project=args.project)
+        begun = True if args.started else False if args.unstarted else None
+        return ledger.tasks(open_only=args.open, project=args.project, started=begun)
     if command == "show":
         return ledger.show(args.task_id)
     if command == "edit":
         status = "done" if args.done else "open" if args.open else None
-        return ledger.edit(args.task_id, title=args.title, ref=args.ref, status=status)
+        return ledger.edit(
+            args.task_id,
+            title=args.title,
+            ref=args.ref,
+            status=status,
+            project=args.project,
+            description=args.description,
+            before=args.before,
+            after=args.after,
+            top=args.top,
+        )
     if command == "assign":
         return ledger.assign(
             args.session, task_id=args.task, title=args.title, ref=args.ref, project=args.project
@@ -374,7 +412,7 @@ def human(args: argparse.Namespace, data: Any) -> str:
             f"Removed {data['id']} ({human_duration(data['duration_seconds'])}, "
             f"{data['removed_intervals']} intervals)"
         )
-    if command in ("task", "edit"):
+    if command in ("task", "add", "edit"):
         return task_line(data)
     if command == "list":
         return "\n".join(task_line(t) for t in data) or "No tasks."
@@ -454,6 +492,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             data: Any = setup(args, json_mode)
         elif args.command == "doctor":
             data = doctor(db)
+        elif args.command == "board":
+            if json_mode:
+                raise WorklogError("board has no JSON output", "usage_error")
+            return board.serve(db, args.port, open_browser=not args.no_open)
         else:
             ledger = Ledger(db, config.load())
             ledger.drain()

@@ -7,6 +7,7 @@ from worklog_cli import spool
 from worklog_cli.errors import WorklogError
 from worklog_cli.ledger import Ledger
 from worklog_cli.reporting import report
+from worklog_cli.timeutil import parse_iso
 
 
 def prompt(db, cwd, when, session="s1", agent="claude"):
@@ -218,3 +219,145 @@ def test_remove_task_with_time_requires_force(ledger):
     assert ledger.remove_task(logged["task_id"], force=True)["duration_seconds"] == 3600
     with pytest.raises(WorklogError, match="Unknown task"):
         ledger.show(logged["task_id"])
+
+
+def test_capture_goes_to_inbox_on_top_without_time(ledger):
+    first = ledger.add_task(None, "Read the proposal")
+    ledger.add_project("example-project")
+    second = ledger.add_task("example-project", "Check the logs", description=" why ")
+    assert first["project"] == "inbox" and not first["started"]
+    assert second["description"] == "why" and second["rank"] < first["rank"]
+    assert [t["id"] for t in ledger.tasks(started=False)] == [first["id"], second["id"]]
+    with pytest.raises(WorklogError, match="reserved"):
+        ledger.add_task("ignore", "x")
+
+
+def test_started_filter_follows_intervals(ledger):
+    ledger.add_project("example-project")
+    planned = ledger.add_task("example-project", "Planned")
+    logged = ledger.log(at("09:00"), at("10:00"), project="example-project", title="Meeting")
+    assert [t["id"] for t in ledger.tasks(started=True)] == [logged["task_id"]]
+    assert [t["id"] for t in ledger.tasks(started=False)] == [planned["id"]]
+    ledger.remove(logged["id"][:8])
+    assert ledger.show(logged["task_id"])["started"] is False
+
+
+def test_edit_project_description_and_status(ledger, clock):
+    capture = ledger.add_task(None, "Call back")
+    ledger.add_project("example-project")
+    edited = ledger.edit(capture["id"], project="example-project", description="Before Friday")
+    assert edited["project"] == "example-project" and edited["description"] == "Before Friday"
+    with pytest.raises(WorklogError, match="reserved"):
+        ledger.edit(capture["id"], project="inbox")
+    with pytest.raises(WorklogError, match="Unknown project"):
+        ledger.edit(capture["id"], project="typo")
+    done = ledger.edit(capture["id"], status="done")
+    assert parse_iso(done["closed_at"]) == at("18:00")
+    clock[0] = at("19:00")
+    assert ledger.edit(capture["id"], status="done")["closed_at"] == done["closed_at"]
+    reopened = ledger.edit(capture["id"], status="open", description="")
+    assert reopened["closed_at"] is None and reopened["description"] is None
+
+
+def order(db):
+    return [t["title"] for t in sorted(db.tasks(), key=lambda t: t["rank"])]
+
+
+def test_manual_order_before_after_top(ledger):
+    a, b, c = (ledger.add_task(None, name)["id"] for name in "abc")
+    assert order(ledger) == ["c", "b", "a"]
+    ledger.edit(c, after=a)
+    assert order(ledger) == ["b", "a", "c"]
+    ledger.edit(c, before=b)
+    assert order(ledger) == ["c", "b", "a"]
+    ledger.edit(a, top=True)
+    assert order(ledger) == ["a", "c", "b"]
+    with pytest.raises(WorklogError, match="itself"):
+        ledger.edit(a, before=a)
+    with pytest.raises(WorklogError, match="only one"):
+        ledger.edit(a, before=b, top=True)
+
+
+def test_order_renumbers_when_gaps_get_too_small(ledger):
+    a, b = (ledger.add_task(None, name)["id"] for name in "ab")
+    others = [ledger.add_task(None, f"x{i}")["id"] for i in range(3)]
+    for _ in range(40):  # halve the same gap until it must be renumbered
+        for task in others:
+            ledger.edit(task, before=a)
+    assert order(ledger) == ["b", "x0", "x1", "x2", "a"]
+    ranks = [t["rank"] for t in ledger.tasks()]
+    assert len(set(ranks)) == len(ranks)
+    assert ledger.edit(b, before=a)["rank"] < ledger.show(a)["rank"]
+
+
+def test_agent_turn_reopens_done_task_but_heartbeat_and_log_do_not(ledger, tmp_path):
+    prompt(ledger, tmp_path / "work", ts("09:00"))
+    activity(ledger, ts("09:10"))
+    task_id = only_task(ledger)["id"]
+    ledger.edit(task_id, status="done")
+    activity(ledger, ts("09:20"))
+    ledger.log(at("10:00"), at("10:30"), task_id=task_id)
+    assert ledger.show(task_id)["status"] == "done"
+    prompt(ledger, tmp_path / "work", ts("11:00"))
+    reopened = ledger.show(task_id)
+    assert reopened["status"] == "open" and reopened["closed_at"] is None
+
+
+def test_assign_moves_inbox_capture_to_the_chat_project(ledger, tmp_path):
+    capture = ledger.add_task(None, "Fix the export")
+    prompt(ledger, tmp_path / "work" / "repo", ts("09:00"))
+    activity(ledger, ts("09:30"))
+    info = ledger.assign("claude:s1", task_id=capture["id"])
+    assert info["project"] == "example-project"
+    task = only_task(ledger)
+    assert task["id"] == capture["id"] and task["started"]
+
+
+def test_assign_keeps_inbox_capture_from_unmapped_directory_or_explicit_project(ledger, tmp_path):
+    first = ledger.add_task(None, "First")
+    second = ledger.add_task(None, "Second")
+    ledger.add_project("example-client")
+    prompt(ledger, tmp_path / "elsewhere", ts("09:00"), session="a")
+    prompt(ledger, tmp_path / "work", ts("09:00"), session="b")
+    assert ledger.assign("claude:a", task_id=first["id"])["project"] == "inbox"
+    info = ledger.assign("claude:b", task_id=second["id"], project="example-client")
+    assert info["project"] == "example-client"
+
+
+def test_schema_2_ledger_is_migrated(tmp_path):
+    path = tmp_path / "v2.db"
+    connection = sqlite3.connect(path)
+    schema = """
+    CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+    CREATE TABLE counters (day TEXT PRIMARY KEY, value INTEGER NOT NULL);
+    CREATE TABLE tasks (
+     id TEXT PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id),
+     title TEXT NOT NULL, ref TEXT, status TEXT NOT NULL,
+     auto_title INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+    CREATE TABLE agent_sessions (
+     agent TEXT NOT NULL, session_id TEXT NOT NULL, task_id TEXT, cwd TEXT NOT NULL,
+     ignored INTEGER NOT NULL DEFAULT 0, context_hash TEXT, created_at TEXT NOT NULL,
+     PRIMARY KEY(agent, session_id));
+    CREATE TABLE intervals (
+     id TEXT PRIMARY KEY, task_id TEXT NOT NULL, started_at TEXT NOT NULL,
+     ended_at TEXT NOT NULL, source TEXT NOT NULL, session_id TEXT, note TEXT);
+    INSERT INTO projects VALUES (1, 'example-project');
+    INSERT INTO tasks VALUES ('ACT-20260901-001', 1, 'Old', NULL, 'done', 0,
+     '2026-09-01T09:00:00+00:00');
+    INSERT INTO tasks VALUES ('ACT-20260902-001', 1, 'Newer', NULL, 'open', 0,
+     '2026-09-02T09:00:00+00:00');
+    PRAGMA user_version = 2;
+    """
+    connection.executescript(schema)
+    connection.close()
+    db = Ledger(path)
+    try:
+        assert db.db.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert order(db) == ["Newer", "Old"]
+        old = db.show("ACT-20260901-001")
+        assert old["status"] == "done" and old["closed_at"] is None
+        assert old["description"] is None
+        db.add_task(None, "Capture")
+        assert order(db) == ["Capture", "Newer", "Old"]
+    finally:
+        db.close()

@@ -11,7 +11,11 @@ and always exits 0.
 ## Shapes
 
 - Task: `{id, project, title, ref: string|null, status: "open"|"done",
-  provisional_title: boolean, created_at, duration_seconds}`.
+  provisional_title: boolean, created_at, duration_seconds,
+  description: string|null, rank: number, started: boolean,
+  closed_at: string|null}`. `rank` orders tasks manually (lower first);
+  `started` is true when the task has at least one interval. `closed_at` is
+  null for open tasks and for tasks closed before 0.3.
 - Task detail (`show`): Task plus `intervals: Interval[]` and
   `sessions: string[]` (chat keys such as `claude:ab12`).
 - Interval: `{id, task_id, project, title, started_at, ended_at,
@@ -32,7 +36,7 @@ are raw.
 | --- | --- |
 | log, move INTERVAL | Interval |
 | rm | Interval plus `recreate`: the `worklog log` command that restores it |
-| task add, show, edit | Task (detail for show) |
+| add, task add, show, edit | Task (detail for show) |
 | list | Task[] |
 | assign, move --session | Session |
 | map | `{path, target, moved_sessions}` |
@@ -45,6 +49,11 @@ are raw.
 | project add | `{name}` |
 | setup | `{applied: string[], changes: {agent, file, diff}[], cancelled, dry_run}` |
 | doctor | `{ok, checks: {name, ok, detail}[]}` |
+
+Inbox captures (tasks without time and without a project) are listed by
+`list --project inbox --unstarted`; `inbox` keeps listing unassigned time.
+`board` serves a local page and has no JSON output; its HTTP API uses the same
+envelope and is internal to the page.
 
 `report --format json` emits the same envelope as `report --json`; `--format
 csv` writes CSV (`day, key, project, ref, task_id, title, hours, minutes,
