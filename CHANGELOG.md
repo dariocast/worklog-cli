@@ -4,6 +4,25 @@ This project follows Semantic Versioning. Notable changes are recorded here.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-12
+
+Inbox captures, a small backlog and a local web board. The ledger is migrated
+to schema 3 on first use; 0.2 can no longer open it, so update the installed
+tool (and therefore the hooks) together.
+
+- `worklog add "text"` notes something to do; without `--project` it goes to
+  the inbox. `task add` takes the title as argument and an optional project.
+- Tasks gain a description, a manual order and a closing time: `edit
+  --project/--description/--before/--after/--top`, `list --unstarted/--started`.
+- A new agent turn on a done task reopens it; manual logs keep it done.
+- Binding a chat to an inbox capture with `assign --task` moves it to the
+  project of the chat's directory when that directory is mapped.
+- The note injected into chats explains how to capture work for later.
+- `worklog board` serves a page on 127.0.0.1 with Board (Inbox, To do,
+  In progress, Done; drag and drop) and List (time per project) views, guarded
+  by a per-run token, a Host check and a strict CSP, with no network resources.
+- JSON: tasks gain `description`, `rank`, `started` and `closed_at`.
+
 ## [0.2.2] - 2026-10-01
 
 - Add `worklog task rm ID` to delete a task and its intervals, for example one

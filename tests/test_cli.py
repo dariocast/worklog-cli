@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from worklog_cli import __version__
+
 
 def run(*args, stdin="", ok=True, cwd=None):
     result = subprocess.run(
@@ -131,7 +133,7 @@ def test_structured_errors(isolated):
     assert json.loads(result.stderr)["error"]["code"] == "validation_error"
     result = run("report", "--today", "--from", "2026-01-01", "--json", ok=False)
     assert json.loads(result.stderr)["error"]["code"] == "usage_error"
-    assert run("--version").stdout.strip().startswith("WorkLog CLI 0.2")
+    assert run("--version").stdout.strip() == f"WorkLog CLI {__version__}"
 
 
 @pytest.fixture

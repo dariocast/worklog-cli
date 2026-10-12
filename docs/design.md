@@ -1,6 +1,7 @@
-# WorkLog CLI 0.2 design
+# WorkLog CLI design
 
-Status: implemented in 0.2.0. Supersedes the 0.1 design.
+Status: implemented in 0.3.0 (0.2 core plus the backlog and board section).
+Supersedes the 0.1 design.
 
 ## Purpose
 
@@ -203,7 +204,7 @@ timezone unless `--timezone` is given. No rounding unless `--round` is given
 
 ## Backlog and board (0.3)
 
-Status: implemented, to be released as 0.3.0. Everything above stays valid; this section adds to it.
+Status: implemented in 0.3.0. Everything above stays valid; this section adds to it.
 
 ### Purpose
 
