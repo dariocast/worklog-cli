@@ -4,6 +4,19 @@ This project follows Semantic Versioning. Notable changes are recorded here.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-15
+
+Board accessibility fixes from a WCAG 2.2 audit.
+
+- Every drag has an alternative: Alt+Up/Alt+Down on a card and Move up / Move
+  down in the editor reorder tasks.
+- Keyboard focus returns to the task after editing, moving, dropping and the
+  periodic refresh, instead of being lost.
+- A rejected drop now says why; before, the explanation never appeared.
+- Card and row titles are real buttons; the Board/List switch is a pair of
+  toggle buttons; the board no longer re-announces itself to screen readers.
+- Higher contrast for input outlines, the Delete button and secondary text.
+
 ## [0.3.0] - 2026-10-12
 
 Inbox captures, a small backlog and a local web board. The ledger is migrated

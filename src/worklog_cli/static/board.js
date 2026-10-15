@@ -21,6 +21,8 @@ const state = {
   allDone: false,
   editing: null,
   dragging: null,
+  focusId: null,      // task whose control gets the focus after the next render
+  focusAction: null,  // editor button that keeps the focus after the next render
   sort: { key: "project", dir: 1 },
 };
 
@@ -103,12 +105,47 @@ async function change(method, path, body) {
 function render() {
   if (!state.data) return;
   for (const button of document.querySelectorAll(".views button")) {
-    button.setAttribute("aria-selected", String(button.dataset.view === state.view));
+    button.setAttribute("aria-pressed", String(button.dataset.view === state.view));
   }
   const main = document.getElementById("main");
+  // Rendering replaces every node, so the focus is put back where it was.
+  const kept = main.contains(document.activeElement)
+    ? document.activeElement.closest("[data-id]")?.dataset.id : null;
   main.replaceChildren(state.view === "list" ? renderList() : renderBoard());
-  const field = main.querySelector(".edit input");
-  if (field && !main.contains(document.activeElement)) field.focus();
+  const form = main.querySelector(".edit");
+  if (form) {
+    const action = state.focusAction && form.querySelector(`[data-action="${state.focusAction}"]:not(:disabled)`);
+    (action || form.querySelector("input")).focus();
+  } else {
+    focusTask(state.focusId || kept);
+  }
+  state.focusId = null;
+  state.focusAction = null;
+}
+
+function focusTask(id) {
+  if (id) document.querySelector(`[data-id="${CSS.escape(id)}"] .open`)?.focus();
+}
+
+// Keyboard and button alternative to dragging: move a task among its visible neighbours.
+
+function movable(task) {
+  return state.view === "board" && task.column !== "done";
+}
+
+function step(task, delta) {
+  const list = state.data.tasks.filter((t) =>
+    t.column === task.column && (task.column !== "todo" || t.project === task.project));
+  const other = list[list.findIndex((t) => t.id === task.id) + delta];
+  if (!other) return null;
+  return delta < 0 ? { before: other.id } : { after: other.id };
+}
+
+async function move(task, delta) {
+  const position = step(task, delta);
+  if (!position) return;
+  state.focusId = task.id;
+  await change("PATCH", `/api/tasks/${task.id}`, position);
 }
 
 function tasksIn(column) {
@@ -156,16 +193,24 @@ function renderBoard() {
 }
 
 function card(task) {
-  if (state.editing === task.id) return el("article", { className: "card task editing" }, editor(task));
+  if (state.editing === task.id) {
+    return el("article", { className: "card task editing", "data-id": task.id }, editor(task));
+  }
   const meta = el("div", { className: "meta" },
     task.column !== "todo" && task.column !== "inbox" ? el("span", { className: "badge badge-outline" }, task.project) : null,
     task.ref ? el("span", { className: "badge badge-secondary" }, task.ref) : null,
     task.duration_seconds > 0 ? el("span", { className: "time" }, duration(task.duration_seconds)) : null,
     el("span", { className: "id" }, task.id));
   const node = el("article", {
-    className: "card task", draggable: "true", tabindex: "0", "data-id": task.id,
+    className: "card task", draggable: "true", "data-id": task.id,
     onclick: () => { state.editing = task.id; render(); },
-    onkeydown: (event) => { if (event.key === "Enter") { state.editing = task.id; render(); } },
+    onkeydown: (event) => {
+      if (!event.altKey || !movable(task)) return;
+      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+        event.preventDefault();
+        move(task, event.key === "ArrowUp" ? -1 : 1);
+      }
+    },
     ondragstart: (event) => {
       state.dragging = task;
       event.dataTransfer.effectAllowed = "move";
@@ -174,7 +219,12 @@ function card(task) {
     },
     ondragend: () => { state.dragging = null; clearMarks(); node.classList.remove("dragging"); },
   },
-  el("div", { className: task.column === "done" ? "title done-title" : "title" }, task.title),
+  el("button", {
+    type: "button",
+    className: task.column === "done" ? "open title done-title" : "open title",
+    title: movable(task) ? "Enter to edit, Alt+Up or Alt+Down to move" : "Enter to edit",
+    "aria-keyshortcuts": movable(task) ? "Alt+ArrowUp Alt+ArrowDown" : null,
+  }, task.title),
   meta,
   task.description ? el("div", { className: "desc" }, task.description) : null,
   task.column === "inbox"
@@ -188,18 +238,25 @@ function editor(task) {
   const field = (label, input) => el("label", { className: "label" }, label, input);
   const title = el("input", { className: "input", value: task.title, required: true, maxlength: "500" });
   const ref = el("input", { className: "input", value: task.ref || "", placeholder: "e.g. DEMO-123" });
+  // ds-allow-native-select: accessible and keyboard-complete for free; a custom listbox is not worth its code here.
   const project = el("select", { className: "select" },
     task.project === "inbox" ? el("option", { value: "", selected: true }, "inbox (choose a project)") : null,
     state.data.projects.map((name) => el("option", { value: name, selected: name === task.project }, name)));
   const description = el("textarea", { className: "textarea", placeholder: "What and why" });
   description.value = task.description || "";
-  const save = async () => {
+  const fields = () => {
     const body = { title: title.value, ref: ref.value, description: description.value };
     if (project.value && project.value !== task.project) body.project = project.value;
-    state.editing = null;
-    await change("PATCH", `/api/tasks/${task.id}`, body);
+    return body;
   };
-  const cancel = () => { state.editing = null; render(); };
+  const close = () => { state.editing = null; state.focusId = task.id; };
+  const save = async () => { close(); await change("PATCH", `/api/tasks/${task.id}`, fields()); };
+  const cancel = () => { close(); render(); };
+  const shift = (delta, action) => {
+    // Unsaved edits travel with the move, so re-rendering the editor loses nothing.
+    state.focusAction = action;
+    change("PATCH", `/api/tasks/${task.id}`, { ...fields(), ...step(task, delta) });
+  };
   const done = task.status === "done";
   return el("form", {
     className: "edit",
@@ -219,14 +276,24 @@ function editor(task) {
     el("button", { type: "button", className: "btn btn-sm btn-ghost", onclick: cancel }, "Cancel"),
     el("button", {
       type: "button", className: "btn btn-sm btn-outline",
-      onclick: () => { state.editing = null; change("PATCH", `/api/tasks/${task.id}`, { status: done ? "open" : "done" }); },
+      onclick: () => { close(); change("PATCH", `/api/tasks/${task.id}`, { status: done ? "open" : "done" }); },
     }, done ? "Reopen" : "Mark done"),
+    movable(task) ? [
+      el("button", {
+        type: "button", className: "btn btn-sm btn-outline", "data-action": "up",
+        disabled: !step(task, -1), onclick: () => shift(-1, "up"),
+      }, "Move up"),
+      el("button", {
+        type: "button", className: "btn btn-sm btn-outline", "data-action": "down",
+        disabled: !step(task, 1), onclick: () => shift(1, "down"),
+      }, "Move down"),
+    ] : null,
     task.started ? null : el("button", {
       type: "button", className: "btn btn-sm btn-ghost-destructive push",
       onclick: () => {
         if (!confirm(`Delete “${task.title}”?`)) return;
         state.editing = null;
-        change("DELETE", `/api/tasks/${task.id}`);
+        change("DELETE", `/api/tasks/${task.id}`).then(() => document.getElementById("capture-input").focus());
       },
     }, "Delete")));
 }
@@ -260,9 +327,10 @@ function dropZone(node, target) {
     const decision = plan(state.dragging, where);
     event.stopPropagation();
     clearMarks();
-    if (decision.reject || decision.skip) return;  // not a drop target: the browser shows "no drop"
-    event.preventDefault();
-    if (where.anchor) node.classList.add(where.position === "before" ? "drop-before" : "drop-after");
+    if (decision.skip) return;  // nothing would change: the browser shows "no drop"
+    event.preventDefault();  // rejected drops are accepted too, so the drop can say why
+    if (decision.reject) node.classList.add("drop-reject");
+    else if (where.anchor) node.classList.add(where.position === "before" ? "drop-before" : "drop-after");
     else node.classList.add("drop-into");
   });
   node.addEventListener("drop", async (event) => {
@@ -273,8 +341,13 @@ function dropZone(node, target) {
     const decision = plan(task, resolve(event, node, target));
     state.dragging = null;
     clearMarks();
-    if (decision.reject) toast(decision.reject);
-    else if (decision.body) await change("PATCH", `/api/tasks/${task.id}`, decision.body);
+    if (decision.reject) {
+      toast(decision.reject);
+      focusTask(task.id);
+    } else if (decision.body) {
+      state.focusId = task.id;
+      await change("PATCH", `/api/tasks/${task.id}`, decision.body);
+    }
   });
 }
 
@@ -285,8 +358,8 @@ function resolve(event, node, target) {
 }
 
 function clearMarks() {
-  for (const node of document.querySelectorAll(".drop-before, .drop-after, .drop-into")) {
-    node.classList.remove("drop-before", "drop-after", "drop-into");
+  for (const node of document.querySelectorAll(".drop-before, .drop-after, .drop-into, .drop-reject")) {
+    node.classList.remove("drop-before", "drop-after", "drop-into", "drop-reject");
   }
 }
 
@@ -332,13 +405,19 @@ function renderList() {
     if (byProject && task.project !== group) { closeGroup(); group = task.project; subtotal = 0; }
     subtotal += task.duration_seconds;
     body.append(el("tr", {
-      className: "row", tabindex: "0",
-      onclick: () => { state.editing = state.editing === task.id ? null : task.id; render(); },
-      onkeydown: (event) => { if (event.key === "Enter") { state.editing = task.id; render(); } },
+      className: "row", "data-id": task.id,
+      onclick: () => {
+        state.editing = state.editing === task.id ? null : task.id;
+        if (!state.editing) state.focusId = task.id;
+        render();
+      },
     },
     el("td", { className: "project" }, task.project),
     el("td", { className: "task-title" },
-      el("span", { className: task.column === "done" ? "done-title" : null }, task.title),
+      el("button", {
+        type: "button", className: task.column === "done" ? "open done-title" : "open",
+        "aria-expanded": String(state.editing === task.id),
+      }, task.title),
       task.ref ? el("span", { className: "badge badge-secondary" }, task.ref) : null),
     el("td", {}, el("span", { className: STATUS_BADGE[task.column] }, LABELS[task.column])),
     el("td", { className: "num time" }, task.duration_seconds > 0 ? duration(task.duration_seconds) : "—")));

@@ -12,15 +12,16 @@
   --secondary: 240 4.8% 95.9%;
   --secondary-foreground: 240 5.9% 10%;
   --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 3.8% 46.1%;
+  --muted-foreground: 240 3.8% 43%;  /* 46.1% (shadcn) fails 4.5:1 on --muted */
   --accent: 240 4.8% 95.9%;
   --accent-foreground: 240 5.9% 10%;
   --destructive: 0 84.2% 60.2%;
   --destructive-foreground: 0 0% 98%;
+  --destructive-text: 0 72% 42%;  /* destructive as text on --background: 4.5:1 or more */
   --success: 142 71% 29%;
   --success-soft: 141 76% 94%;
   --border: 240 5.9% 90%;
-  --input: 240 5.9% 90%;
+  --input: 240 5% 56%;  /* control outline: 3:1 against --background (WCAG 1.4.11) */
   --ring: 240 5.9% 10%;
   --radius: 0.5rem;
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
@@ -46,10 +47,11 @@
     --accent-foreground: 0 0% 98%;
     --destructive: 0 62.8% 50%;
     --destructive-foreground: 0 0% 98%;
+    --destructive-text: 0 85% 65%;
     --success: 142 69% 58%;
     --success-soft: 144 61% 12%;
     --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
+    --input: 240 5% 44%;
     --ring: 240 4.9% 83.9%;
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.4);
     --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.5);
@@ -100,7 +102,7 @@ button, input, select, textarea { font: inherit; color: inherit; margin: 0; }
 .btn-ghost { background: transparent; color: hsl(var(--foreground)); }
 .btn-destructive { background: hsl(var(--destructive)); color: hsl(var(--destructive-foreground)); }
 .btn-destructive:hover { background: hsl(var(--destructive) / 0.9); }
-.btn-ghost-destructive { background: transparent; color: hsl(var(--destructive)); }
+.btn-ghost-destructive { background: transparent; color: hsl(var(--destructive-text)); }
 .btn-ghost-destructive:hover { background: hsl(var(--destructive) / 0.1); }
 .btn-link {
   background: transparent; color: hsl(var(--foreground)); height: auto; padding: 0;
@@ -154,7 +156,7 @@ button, input, select, textarea { font: inherit; color: inherit; margin: 0; }
   height: 100%; padding: 0 12px; border-radius: calc(var(--radius) - 2px);
   background: transparent; font-size: 13px; font-weight: 500; cursor: pointer;
 }
-.tabs-trigger[aria-selected="true"] {
+.tabs-trigger[aria-selected="true"], .tabs-trigger[aria-pressed="true"] {
   background: hsl(var(--background)); color: hsl(var(--foreground)); box-shadow: var(--shadow-sm);
 }
 

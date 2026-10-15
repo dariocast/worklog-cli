@@ -332,6 +332,13 @@ Interactions:
 - Add from the capture field; click a card to edit title, reference,
   description and project inline.
 - Drag and drop and inline edits follow the transition table above.
+- Every drag has a non-drag alternative (WCAG 2.5.7): the editor changes the
+  project and the status, and reorders with Move up / Move down; on a focused
+  card Alt+Up and Alt+Down reorder within its column (or project group). A
+  rejected drop is accepted only to explain why in a status message.
+- The project field is a native `<select>`, a deliberate exception to the
+  custom-listbox rule of the design kit: it is keyboard and screen-reader
+  complete without extra code.
 - A List view shows the same tasks as a table (project, task with reference,
   status, time), sortable by column, with a subtotal per project when sorted
   by project and a grand total. Clicking a row opens the same inline editor.

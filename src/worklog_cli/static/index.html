@@ -18,12 +18,12 @@
            aria-label="New task">
     <span class="kbd" aria-hidden="true">/</span>
   </form>
-  <div class="tabs-list views" role="tablist" aria-label="View">
-    <button type="button" class="tabs-trigger" role="tab" data-view="board">Board</button>
-    <button type="button" class="tabs-trigger" role="tab" data-view="list">List</button>
+  <div class="tabs-list views" role="group" aria-label="View">
+    <button type="button" class="tabs-trigger" data-view="board" aria-pressed="false">Board</button>
+    <button type="button" class="tabs-trigger" data-view="list" aria-pressed="false">List</button>
   </div>
 </header>
-<main id="main" aria-live="polite"></main>
+<main id="main"></main>
 <div id="toast" class="toast" role="status" hidden></div>
 </body>
 </html>
