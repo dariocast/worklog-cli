@@ -11,7 +11,7 @@
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="brand-mark" aria-hidden="true">W</span>WorkLog</div>
+  <h1 class="brand"><span class="brand-mark" aria-hidden="true">W</span>WorkLog</h1>
   <form id="capture" autocomplete="off">
     <input id="capture-input" class="input input-lg" type="text" maxlength="500" autofocus
            placeholder="Note something to do… “@project text” files it in a project"
@@ -24,6 +24,9 @@
   </div>
 </header>
 <main id="main"></main>
-<div id="toast" class="toast" role="status" hidden></div>
+<div id="toast" class="toast" role="status" hidden>
+  <span class="toast-text"></span>
+  <button type="button" class="btn btn-ghost btn-icon" aria-label="Dismiss">×</button>
+</div>
 </body>
 </html>

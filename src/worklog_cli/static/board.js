@@ -59,12 +59,13 @@ function quote(path) {
 }
 
 let toastTimer = 0;
-function toast(message) {
+function toast(message, { error = false } = {}) {
+  // Errors stay until dismissed; explanations fade after a while.
   const box = document.getElementById("toast");
-  box.textContent = message;
+  box.querySelector(".toast-text").textContent = message;
   box.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { box.hidden = true; }, 4000);
+  if (!error) toastTimer = setTimeout(() => { box.hidden = true; }, 6000);
 }
 
 async function api(method, path, body) {
@@ -84,19 +85,24 @@ async function load() {
     state.data = await api("GET", "/api/board" + (state.allDone ? "?done=all" : ""));
     render();
   } catch (error) {
-    toast(error.message);
+    toast(error.message, { error: true });
   }
 }
 
 async function change(method, path, body) {
+  // Until the board reloads, the task being changed is shown as pending.
+  const id = path.split("/")[3];
+  if (id) document.querySelector(`.task[data-id="${CSS.escape(id)}"]`)?.classList.add("pending");
+  document.body.setAttribute("aria-busy", "true");
   try {
     await api(method, path, body);
     return true;
   } catch (error) {
-    toast(error.message);
+    toast(error.message, { error: true });
     return false;
   } finally {
     await load();
+    document.body.removeAttribute("aria-busy");
   }
 }
 
@@ -165,15 +171,19 @@ function renderBoard() {
   const columns = el("div", { className: "columns" });
   for (const [key, label] of COLUMNS) {
     const tasks = tasksIn(key);
-    const column = el("section", { className: "column", "data-column": key },
+    const lead = key === "inbox" && tasks.length > 0;  // something to triage: the eye starts here
+    const column = el("section", { className: lead ? "column lead" : "column", "data-column": key },
       el("div", { className: "column-head" },
         el("span", { className: "dot", "aria-hidden": "true" }),
         el("h2", {}, label),
-        el("span", { className: "badge badge-secondary" }, tasks.length)));
+        el("span", { className: lead ? "badge" : "badge badge-secondary" }, tasks.length)));
     dropZone(column, { column: key, project: null });
     if (key === "todo") {
       const projects = state.data.projects;
-      if (!projects.length) column.append(el("p", { className: "hint" }, "No projects yet."));
+      if (!projects.length) {
+        column.append(el("p", { className: "hint" },
+          "No projects yet. Create one with ", el("code", {}, "worklog project add NAME"), "."));
+      }
       for (const project of projects) {
         const own = tasks.filter((t) => t.project === project);
         const group = el("div", { className: own.length ? "group" : "group empty" },
@@ -199,8 +209,7 @@ function card(task) {
   const meta = el("div", { className: "meta" },
     task.column !== "todo" && task.column !== "inbox" ? el("span", { className: "badge badge-outline" }, task.project) : null,
     task.ref ? el("span", { className: "badge badge-secondary" }, task.ref) : null,
-    task.duration_seconds > 0 ? el("span", { className: "time" }, duration(task.duration_seconds)) : null,
-    el("span", { className: "id" }, task.id));
+    task.duration_seconds > 0 ? el("span", { className: "time" }, duration(task.duration_seconds)) : null);
   const node = el("article", {
     className: "card task", draggable: "true", "data-id": task.id,
     onclick: () => { state.editing = task.id; render(); },
@@ -270,7 +279,7 @@ function editor(task) {
   field("Title", title), field("Reference", ref),
   field("Project", el("div", { className: "select-wrap" }, project)),
   field("Description", description),
-  el("div", { className: "edit-meta" }, task.id, task.duration_seconds > 0 ? ` · ${duration(task.duration_seconds)} recorded` : ""),
+  el("div", { className: "edit-meta" }, el("span", { className: "id" }, task.id), task.duration_seconds > 0 ? ` · ${duration(task.duration_seconds)} recorded` : ""),
   el("div", { className: "actions" },
     el("button", { type: "submit", className: "btn btn-sm" }, "Save"),
     el("button", { type: "button", className: "btn btn-sm btn-ghost", onclick: cancel }, "Cancel"),
@@ -398,7 +407,7 @@ function renderList() {
   const closeGroup = () => {
     if (byProject && group !== null) {
       body.append(el("tr", { className: "subtotal" },
-        el("td", { colspan: "3" }, group), el("td", { className: "num" }, subtotal > 0 ? duration(subtotal) : "—")));
+        el("td", { colspan: "3" }, group), el("td", { className: "num" }, subtotal > 0 ? duration(subtotal) : "")));
     }
   };
   for (const task of tasks) {
@@ -420,7 +429,7 @@ function renderList() {
       }, task.title),
       task.ref ? el("span", { className: "badge badge-secondary" }, task.ref) : null),
     el("td", {}, el("span", { className: STATUS_BADGE[task.column] }, LABELS[task.column])),
-    el("td", { className: "num time" }, task.duration_seconds > 0 ? duration(task.duration_seconds) : "—")));
+    el("td", { className: "num time" }, task.duration_seconds > 0 ? duration(task.duration_seconds) : "")));
     if (state.editing === task.id) body.append(el("tr", { className: "editor" }, el("td", { colspan: "4" }, editor(task))));
   }
   closeGroup();
@@ -470,5 +479,10 @@ setInterval(() => {
 }, 15000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
 
-if (!token) toast("Open the board from the link printed by `worklog board`.");
+document.querySelector("#toast button").addEventListener("click", () => {
+  document.getElementById("toast").hidden = true;
+  document.getElementById("capture-input").focus();
+});
+
+if (!token) toast("Open the board from the link printed by `worklog board`.", { error: true });
 load();

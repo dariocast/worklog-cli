@@ -4,6 +4,16 @@ This project follows Semantic Versioning. Notable changes are recorded here.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-15
+
+- Board: mobile-first layout; the header scrolls away on phones and leaves
+  room for focused items on wider screens.
+- Board: the inbox stands out while it holds something to triage; task IDs
+  move to the editor; changes show a pending state until saved.
+- Board: errors stay until dismissed; empty states say what to do next.
+- Board styles use a token scale for spacing, type and sizes, and honour
+  reduced motion.
+
 ## [0.3.1] - 2026-10-15
 
 Board accessibility fixes from a WCAG 2.2 audit.
