@@ -102,6 +102,7 @@ def parser() -> Parser:
     assign.add_argument("--title")
     assign.add_argument("--ref")
     assign.add_argument("--project")
+    assign.add_argument("--description", help="What the chat works on; empty string clears it")
 
     mapping = commands.add_parser("map", help="Map a directory to a project, or to ignore")
     mapping.add_argument("path")
@@ -332,7 +333,12 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
         )
     if command == "assign":
         return ledger.assign(
-            args.session, task_id=args.task, title=args.title, ref=args.ref, project=args.project
+            args.session,
+            task_id=args.task,
+            title=args.title,
+            ref=args.ref,
+            project=args.project,
+            description=args.description,
         )
     if command == "map":
         target = args.target.strip()

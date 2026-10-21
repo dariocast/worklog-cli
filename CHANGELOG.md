@@ -4,6 +4,11 @@ This project follows Semantic Versioning. Notable changes are recorded here.
 
 ## [Unreleased]
 
+- `worklog assign --description` lets the agent describe its chat's task, and
+  the note injected into chats now asks for a title and a short description in
+  one command, also for chats in the inbox. Chats already open get the updated
+  note once on their next prompt.
+
 ## [0.3.2] - 2026-10-15
 
 - Board: mobile-first layout; the header scrolls away on phones and leaves

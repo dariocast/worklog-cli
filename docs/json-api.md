@@ -22,7 +22,7 @@ and always exits 0.
   duration_seconds, source: "claude"|"codex"|"manual", session: string|null,
   note: string|null}`. Intervals are always closed.
 - Session: `{session, cwd, ignored, task_id, project, title, ref,
-  provisional_title}`.
+  provisional_title, description: string|null}`.
 - Report entry: `{day, task_id, key, project, ref, title, duration_seconds,
   raw_seconds, notes: string[]}`. `key` is the ref, or the project if there is
   no ref. `duration_seconds` is rounded only with `--round`.

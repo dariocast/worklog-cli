@@ -588,7 +588,7 @@ class Ledger:
     def session_info(self, agent: str, session_id: str) -> dict[str, Any]:
         row = self.db.execute(
             "SELECT s.agent, s.session_id, s.cwd, s.ignored, t.id AS task_id, t.title, t.ref, "
-            "t.auto_title, p.name AS project FROM agent_sessions s "
+            "t.auto_title, t.description, p.name AS project FROM agent_sessions s "
             "LEFT JOIN tasks t ON t.id = s.task_id LEFT JOIN projects p ON p.id = t.project_id "
             "WHERE s.agent = ? AND s.session_id = ?",
             (agent, session_id),
@@ -604,6 +604,7 @@ class Ledger:
             "title": row["title"],
             "ref": row["ref"],
             "provisional_title": bool(row["auto_title"]),
+            "description": row["description"],
         }
 
     def _context_if_changed(self, agent: str, session_id: str) -> str | None:
@@ -626,10 +627,13 @@ class Ledger:
         title: str | None = None,
         ref: str | None = None,
         project: str | None = None,
+        description: str | None = None,
     ) -> dict[str, Any]:
         agent, session_id = parse_session(key)
-        if task_id is None and title is None and ref is None and project is None:
-            raise WorklogError("Nothing to assign; use --task, --title, --ref or --project")
+        if all(v is None for v in (task_id, title, ref, project, description)):
+            raise WorklogError(
+                "Nothing to assign; use --task, --title, --description, --ref or --project"
+            )
         with self.transaction():
             session = self._require_session(agent, session_id)
             current = session["task_id"]
@@ -655,6 +659,11 @@ class Ledger:
             if ref is not None:
                 self.db.execute(
                     "UPDATE tasks SET ref = ? WHERE id = ?", (ref.strip() or None, current)
+                )
+            if description is not None:
+                self.db.execute(
+                    "UPDATE tasks SET description = ? WHERE id = ?",
+                    (description.strip() or None, current),
                 )
             if project is not None:
                 if project in RESERVED:

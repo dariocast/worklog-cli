@@ -130,8 +130,10 @@ if needed, writes the mapping and moves that directory's inbox time to it.
 
 By default one chat is one task. On a session's first event a task is created
 with a neutral provisional title (`Claude · mobile-app · 2026-09-30 09:00`).
-The agent can then rename it, attach the chat to an existing open task, or set
-the reference with `worklog assign`. `worklog ignore --session` discards a
+The agent can then name and describe it, attach the chat to an existing open
+task, or set the reference with `worklog assign`. The description is written by
+the agent in its own words (what is being done and why), never copied from the
+prompt; it is what makes a task recognisable later on the board. `worklog ignore --session` discards a
 chat's time and stops tracking it.
 
 ## Agents
@@ -147,14 +149,16 @@ command run by the agent cannot otherwise know which chat it belongs to.
 Example for a mapped directory:
 
 > [WorkLog] This chat (claude:ab12) is tracked automatically; no timer to manage.
-> Task ACT-20260930-003, project example-client, provisional title.
-> When the activity is clear, run `worklog assign --session claude:ab12 --title "..."`
-> (add `--ref KEY` if a tracker key is known). If it continues an open task
-> (`worklog list --open --json`), use `worklog assign --session claude:ab12 --task ID`.
-> Put the task ID in any handoff. ...
+> Task ACT-20260930-003, project example-client, provisional title, no description.
+> When the activity is clear, name the task in one command:
+> `worklog assign --session claude:ab12 --title "..." --description "..."`
+> (description: one or two sentences, in your own words, on what is being done
+> and why; add `--ref KEY` if a tracker key is known). If it continues an open
+> or planned task (`worklog list --open --json`), use
+> `worklog assign --session claude:ab12 --task ID`. Put the task ID in any handoff. ...
 
-For the inbox the instruction is to ask which project the directory belongs to
-and run `worklog map`. Ignored directories get no injection. No rule file needs
+For the inbox the note also asks to find out which project the directory
+belongs to and run `worklog map`; naming the task is asked in both cases. Ignored directories get no injection. No rule file needs
 to be installed for Claude Code or Codex.
 
 Agents without hooks use [agent-rule.md](agent-rule.md): note a
@@ -174,7 +178,7 @@ No interactive prompts except the `setup` confirmation.
 | `list [--open] [--project P]` | List tasks |
 | `show ID` | Task with intervals |
 | `edit ID [--title T] [--ref R] [--done \| --open]` | Change a task |
-| `assign --session S [--task ID] [--title T] [--ref R] [--project P]` | Bind a chat to a task, or change its task |
+| `assign --session S [--task ID] [--title T] [--description D] [--ref R] [--project P]` | Bind a chat to a task, or name, describe or move its task |
 | `map PATH PROJECT` / `map PATH ignore` | Map a directory; moves its inbox time |
 | `inbox` | Unassigned time by directory and session |
 | `ignore --session S` | Stop tracking a chat and discard its time |

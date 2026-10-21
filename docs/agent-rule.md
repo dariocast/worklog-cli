@@ -15,8 +15,9 @@ If the user says not to track something, do not.
    `worklog project add NAME`.
 3. Before your final answer, record the turn as a closed interval:
    - first turn of an activity:
-     `worklog log START-now --project NAME --title "Short title" --json`, and
-     keep `data.task_id` for the rest of the activity;
+     `worklog log START-now --project NAME --title "Short title" --json`, then
+     `worklog edit TASK_ID --description "What and why, in your own words" --json`,
+     and keep `data.task_id` for the rest of the activity;
    - later turns: `worklog log START-now --task TASK_ID --json`.
    Add `--note "..."` with a one-line summary of what was done if useful.
 4. When the activity is finished: `worklog edit TASK_ID --done --json`.

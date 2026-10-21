@@ -29,8 +29,9 @@ and are recorded by the next command. Problems appear in `worklog doctor`.
 
 What the agent is asked to do, and nothing more:
 
-- `worklog assign --session KEY --title "..." [--ref KEY]` once the activity is
-  clear;
+- `worklog assign --session KEY --title "..." --description "..." [--ref KEY]`
+  once the activity is clear, with a one or two sentence description in the
+  agent's own words;
 - `worklog assign --session KEY --task ID` when the chat continues an open task
   (found with `worklog list --open --json`), for example an execution chat after
   a planning chat; put the task ID in handoffs;

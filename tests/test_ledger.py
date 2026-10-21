@@ -361,3 +361,22 @@ def test_schema_2_ledger_is_migrated(tmp_path):
         assert order(db) == ["Capture", "Newer", "Old"]
     finally:
         db.close()
+
+
+def test_agent_names_and_describes_the_task_in_one_command(ledger, tmp_path):
+    first = prompt(ledger, tmp_path / "work" / "repo", ts("09:00"))
+    assert "provisional title, no description" in first and "--description" in first
+    info = ledger.assign(
+        "claude:s1", title="Export format", description=" Compare CSV and JSON exports. "
+    )
+    assert info["description"] == "Compare CSV and JSON exports."
+    assert only_task(ledger)["description"] == "Compare CSV and JSON exports."
+    again = prompt(ledger, tmp_path / "work" / "repo", ts("09:10"))  # changed: injected once more
+    assert "title 'Export format', described" in again
+    assert prompt(ledger, tmp_path / "work" / "repo", ts("09:20")) is None
+    assert ledger.assign("claude:s1", description="")["description"] is None
+
+
+def test_inbox_chat_is_asked_to_map_and_to_name_its_task(ledger, tmp_path):
+    context = prompt(ledger, tmp_path / "elsewhere", ts("09:00"))
+    assert "worklog map" in context and '--title "..." --description "..."' in context
