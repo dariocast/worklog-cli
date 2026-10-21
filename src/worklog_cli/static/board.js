@@ -20,6 +20,7 @@ const state = {
   view: remembered("view", "board"),
   allDone: false,
   editing: null,
+  saved: null,        // task whose editor the current click closed by saving it
   dragging: null,
   focusId: null,      // task whose control gets the focus after the next render
   focusAction: null,  // editor button that keeps the focus after the next render
@@ -258,16 +259,26 @@ function editor(task) {
     if (project.value && project.value !== task.project) body.project = project.value;
     return body;
   };
-  const close = () => { state.editing = null; state.focusId = task.id; };
+  const initial = JSON.stringify(fields());
+  let finished = false;  // saved, cancelled or left: the editor acts only once
+  const close = () => { finished = true; state.editing = null; state.focusId = task.id; };
   const save = async () => { close(); await change("PATCH", `/api/tasks/${task.id}`, fields()); };
   const cancel = () => { close(); render(); };
+  const autosave = () => {
+    // Leaving the editor keeps what was typed; the focus stays where the user moved it.
+    if (finished || JSON.stringify(fields()) === initial) return;
+    finished = true;
+    state.editing = null;
+    state.saved = task.id;
+    change("PATCH", `/api/tasks/${task.id}`, fields());
+  };
   const shift = (delta, action) => {
     // Unsaved edits travel with the move, so re-rendering the editor loses nothing.
     state.focusAction = action;
     change("PATCH", `/api/tasks/${task.id}`, { ...fields(), ...step(task, delta) });
   };
   const done = task.status === "done";
-  return el("form", {
+  const form = el("form", {
     className: "edit",
     onsubmit: (event) => { event.preventDefault(); save(); },
     onkeydown: (event) => {
@@ -285,7 +296,7 @@ function editor(task) {
     el("button", { type: "button", className: "btn btn-sm btn-ghost", onclick: cancel }, "Cancel"),
     el("button", {
       type: "button", className: "btn btn-sm btn-outline",
-      onclick: () => { close(); change("PATCH", `/api/tasks/${task.id}`, { status: done ? "open" : "done" }); },
+      onclick: () => { close(); change("PATCH", `/api/tasks/${task.id}`, { ...fields(), status: done ? "open" : "done" }); },
     }, done ? "Reopen" : "Mark done"),
     movable(task) ? [
       el("button", {
@@ -305,7 +316,18 @@ function editor(task) {
         change("DELETE", `/api/tasks/${task.id}`).then(() => document.getElementById("capture-input").focus());
       },
     }, "Delete")));
+  form.autosave = autosave;
+  return form;
 }
+
+// An open editor saves its changes when the pointer or the keyboard focus goes elsewhere.
+function leaveEditor(event) {
+  if (event.type === "pointerdown") state.saved = null;
+  const form = document.querySelector("#main .edit");
+  if (form && !form.contains(event.target)) form.autosave();
+}
+document.addEventListener("pointerdown", leaveEditor, true);
+document.addEventListener("focusin", leaveEditor);
 
 // Drag and drop: every rule of the transition table lives in plan().
 
@@ -416,6 +438,7 @@ function renderList() {
     body.append(el("tr", {
       className: "row", "data-id": task.id,
       onclick: () => {
+        if (state.saved === task.id) { state.saved = null; return; }  // this click already closed it
         state.editing = state.editing === task.id ? null : task.id;
         if (!state.editing) state.focusId = task.id;
         render();

@@ -334,7 +334,9 @@ dark) through a hand-written `ui.css` of tokens and component classes;
 Interactions:
 
 - Add from the capture field; click a card to edit title, reference,
-  description and project inline.
+  description and project inline. Changes are saved when the pointer or the
+  keyboard focus leaves the editor (Escape and Cancel discard them); leaving the
+  browser window keeps the editor open.
 - Drag and drop and inline edits follow the transition table above.
 - Every drag has a non-drag alternative (WCAG 2.5.7): the editor changes the
   project and the status, and reorders with Move up / Move down; on a focused

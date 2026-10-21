@@ -8,6 +8,8 @@ This project follows Semantic Versioning. Notable changes are recorded here.
   the note injected into chats now asks for a title and a short description in
   one command, also for chats in the inbox. Chats already open get the updated
   note once on their next prompt.
+- Board: an edited card is saved when you click or tab elsewhere, instead of
+  losing the changes; Mark done and Reopen keep unsaved edits too.
 
 ## [0.3.2] - 2026-10-15
 
