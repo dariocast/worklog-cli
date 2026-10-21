@@ -23,6 +23,7 @@ from worklog_cli.ledger import STATUSES, Ledger
 from worklog_cli.timeutil import parse_iso
 
 DONE_DAYS = 14
+COLUMNS = ("inbox", "todo", "progress", "waiting", "done")
 MAX_BODY = 64 * 1024
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -67,6 +68,20 @@ def board_data(ledger: Ledger, all_done: bool = False) -> dict[str, Any]:
         tasks.append(task)
     projects = [p["name"] for p in ledger.projects() if p["name"] not in config.RESERVED]
     return {"tasks": tasks, "projects": projects, "done_days": DONE_DAYS}
+
+
+def status_data(ledger: Ledger, project: str | None = None) -> dict[str, Any]:
+    """Where things stand: the board's columns, optionally for one project."""
+    if project is not None and project not in {p["name"] for p in ledger.projects()}:
+        raise WorklogError(f"Unknown project {project!r}", "not_found")
+    tasks = [t for t in board_data(ledger)["tasks"] if project in (None, t["project"])]
+    columns = {key: [t for t in tasks if t["column"] == key] for key in COLUMNS}
+    return {
+        "project": project,
+        "done_days": DONE_DAYS,
+        "counts": {key: len(items) for key, items in columns.items()},
+        "columns": columns,
+    }
 
 
 def text_field(body: dict[str, Any], name: str) -> str | None:

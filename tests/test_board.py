@@ -6,7 +6,8 @@ from datetime import timedelta
 import pytest
 from conftest import at
 
-from worklog_cli.board import BoardServer, board_data
+from worklog_cli.board import BoardServer, board_data, status_data
+from worklog_cli.errors import WorklogError
 from worklog_cli.ledger import Ledger
 
 
@@ -175,3 +176,21 @@ def test_brief_route(server):
     assert status == 200 and body["data"]["text"].startswith(f"Work on WorkLog task {task_id}")
     status, _ = call(server, "GET", "/api/tasks/ACT-20990101-001/brief")
     assert status == 404
+
+
+def test_status_counts_columns_and_filters_by_project(ledger):
+    ledger.add_project("example-project")
+    ledger.add_project("other-project")
+    ledger.add_task(None, "Capture")
+    planned = ledger.add_task("example-project", "Planned")
+    ledger.edit(planned["id"], next_step="Write the outline")
+    waiting = ledger.add_task("example-project", "Access")
+    ledger.edit(waiting["id"], waiting=True)
+    ledger.log(at("09:00"), at("10:00"), project="other-project", title="Meeting")
+    status = status_data(ledger)
+    assert status["counts"] == {"inbox": 1, "todo": 1, "progress": 1, "waiting": 1, "done": 0}
+    assert status["columns"]["todo"][0]["next"] == "Write the outline"
+    mine = status_data(ledger, "example-project")
+    assert mine["counts"] == {"inbox": 0, "todo": 1, "progress": 0, "waiting": 1, "done": 0}
+    with pytest.raises(WorklogError, match="Unknown project"):
+        status_data(ledger, "typo")

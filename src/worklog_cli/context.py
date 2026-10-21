@@ -24,7 +24,7 @@ def render(info: dict[str, Any]) -> str:
         " add `--ref KEY` if a tracker key is known). If it continues an open or planned task"
         f" (`worklog list --open --json`), use `worklog assign --session {session} --task ID`.",
         'To note something for later, run `worklog add "..."` (add `--project P` if known);'
-        " it does not change this chat's task.",
+        " it does not change this chat's task. To see where things stand: `worklog status --json`.",
         "When the next step changes (a handoff, a blocker, the end of a work session), record it"
         f' in one line: `worklog assign --session {session} --next "..."`; add `--waiting` when'
         " the task now depends on someone outside this chat.",

@@ -26,6 +26,9 @@ This project follows Semantic Versioning. Notable changes are recorded here.
   chat, ending with the command that binds that chat to the task. The board
   editor has a Copy brief button (with a dialog fallback when the browser
   refuses the clipboard); its actions are now on two rows.
+- `worklog status [--project P]` sums up the board: counts per column and the
+  tasks in progress, waiting and to do with their next steps, so any chat can
+  answer "where are we". The chat note mentions it.
 
 ## [0.3.2] - 2026-10-15
 

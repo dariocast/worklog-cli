@@ -178,6 +178,7 @@ No interactive prompts except the `setup` confirmation.
 | `list [--open] [--project P]` | List tasks |
 | `show ID` | Task with intervals |
 | `brief ID` | Text to paste in a new chat to work on a task (0.4) |
+| `status [--project P]` | Board columns in short, with next steps (0.4) |
 | `edit ID [--title T] [--ref R] [--next N] [--done \| --drop \| --open] [--waiting \| --no-waiting]` | Change a task |
 | `assign --session S [--task ID] [--title T] [--description D] [--next N] [--waiting \| --no-waiting] [--ref R] [--project P]` | Bind a chat to a task, or name, describe or move its task |
 | `map PATH PROJECT` / `map PATH ignore` | Map a directory; moves its inbox time |
@@ -473,6 +474,17 @@ brief matches the card, then writes the clipboard within the click (with a
 `ClipboardItem` whose text is still loading, as Safari requires). Where the
 browser refuses the clipboard, the brief opens in a dialog, selected, ready to
 copy by hand. Route: `GET /api/tasks/ID/brief`.
+
+### Status
+
+`worklog status [--project P]` answers "where are we" from any chat, so
+coordination is a role any chat can take rather than a chat that must stay
+open: counts per board column (done over the last 14 days), then the tasks in
+progress, waiting and to do with their next steps, and a pointer to the inbox
+when it holds something. JSON: `{project, done_days, counts: {inbox, todo,
+progress, waiting, done}, columns: {COLUMN: Task[]}}`, with the board's
+columns, order and done window (it reuses `board_data`). The injected note
+mentions it in one clause. It is read-only.
 
 Migration 3 → 4 adds the columns in one transaction, like 2 → 3; a schema 2
 ledger runs both steps.

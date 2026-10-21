@@ -42,6 +42,7 @@ are raw.
 | rm | Interval plus `recreate`: the `worklog log` command that restores it |
 | add, task add, show, edit | Task (detail for show) |
 | brief | `{task_id, text}` |
+| status | `{project, done_days, counts: {inbox, todo, progress, waiting, done}, columns: {inbox, todo, progress, waiting, done: Task[]}}`; board tasks also carry `column` and `directories` |
 | list | Task[] |
 | assign, move --session | Session |
 | map | `{path, target, moved_sessions}` |

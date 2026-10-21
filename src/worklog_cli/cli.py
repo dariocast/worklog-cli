@@ -31,7 +31,7 @@ VALUE_OPTIONS = {
     "--timezone", "--round", "--format", "--session", "--description", "--before", "--after",
     "--port", "--next",
 }  # fmt: skip
-READ_ONLY = {"list", "show", "brief", "projects", "inbox", "intervals", "report"}
+READ_ONLY = {"list", "show", "brief", "status", "projects", "inbox", "intervals", "report"}
 
 
 class Parser(argparse.ArgumentParser):
@@ -82,6 +82,9 @@ def parser() -> Parser:
     begun.add_argument("--unstarted", action="store_true", help="Only tasks without time")
     begun.add_argument("--started", action="store_true", help="Only tasks with time")
     commands.add_parser("show", help="Show a task and its intervals").add_argument("task_id")
+    commands.add_parser(
+        "status", help="Where things stand: the board's columns in short"
+    ).add_argument("--project")
     commands.add_parser("brief", help="Text to paste in a new chat to work on a task").add_argument(
         "task_id"
     )
@@ -343,6 +346,8 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
         return ledger.show(args.task_id)
     if command == "brief":
         return ledger.brief(args.task_id)
+    if command == "status":
+        return board.status_data(ledger, args.project)
     if command == "edit":
         status = "done" if args.done else "dropped" if args.drop else "open" if args.open else None
         return ledger.edit(
@@ -445,8 +450,35 @@ def task_line(t: dict[str, Any]) -> str:
     )
 
 
+STATUS_LABELS = {
+    "inbox": "Inbox",
+    "todo": "To do",
+    "progress": "In progress",
+    "waiting": "Waiting",
+    "done": "Done",
+}
+
+
+def status_text(data: dict[str, Any]) -> str:
+    counts = data["counts"]
+    labels = {**STATUS_LABELS, "done": f"Done ({data['done_days']} days)"}
+    lines = [" · ".join(f"{label} {counts[key]}" for key, label in labels.items())]
+    for key in ("progress", "waiting", "todo"):
+        if data["columns"][key]:
+            lines.append(STATUS_LABELS[key])
+        for task in data["columns"][key]:
+            lines.append(f"  {task_line(task)}")
+            if task["next"]:
+                lines.append(f"      next: {task['next']}")
+    if counts["inbox"]:
+        lines.append("To triage: worklog list --project inbox --open")
+    return "\n".join(lines)
+
+
 def human(args: argparse.Namespace, data: Any) -> str:
     command = args.command
+    if command == "status":
+        return status_text(data)
     if command == "brief":
         return str(data["text"])
     if command == "log":

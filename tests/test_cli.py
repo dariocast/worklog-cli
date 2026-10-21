@@ -231,3 +231,16 @@ def test_capture_from_stdin_keeps_the_original_note(isolated):
     brief = run("brief", task["id"]).stdout
     assert brief.startswith(f"Work on WorkLog task {task['id']}: Review the export")
     assert data(run("brief", task["id"], "--json"))["task_id"] == task["id"]
+
+
+def test_status_answers_where_things_stand(isolated):
+    run("project", "add", "example-project")
+    task = data(run("add", "Plan the release", "--project", "example-project", "--json"))
+    run("edit", task["id"], "--waiting", "--next", "Reply from the client")
+    status = data(run("status", "--json"))
+    assert status["counts"]["waiting"] == 1 and status["project"] is None
+    assert [t["id"] for t in status["columns"]["waiting"]] == [task["id"]]
+    text = run("status").stdout
+    assert "Waiting 1" in text and "next: Reply from the client" in text
+    error = run("status", "--project", "typo", "--json", ok=False)
+    assert json.loads(error.stderr)["error"]["code"] == "not_found"

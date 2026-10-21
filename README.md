@@ -56,6 +56,7 @@ chat). A chat can be excluded with `worklog ignore --session ID`.
 ## Everyday commands
 
 ```sh
+worklog status                           # where things stand: columns and next steps
 worklog report --week                    # one row per day and task
 worklog report --from 2026-09-01 --to 2026-09-30 --round 15m --format csv
 worklog log 1h30 --project example-client --title "Planning meeting"

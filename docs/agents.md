@@ -38,6 +38,7 @@ What the agent is asked to do, and nothing more:
 - `worklog assign --session KEY --next "..."` when the next step changes (a
   handoff, a blocker, the end of a work session), with `--waiting` when the
   task now depends on someone outside the chat;
+- `worklog status --json` when asked where things stand;
 - `worklog map PATH PROJECT` after asking the user, when the chat is in the
   inbox;
 - `worklog ignore --session KEY` when the user says not to track the chat.
