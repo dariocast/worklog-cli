@@ -20,6 +20,7 @@ If the user says not to track something, do not.
      and keep `data.task_id` for the rest of the activity;
    - later turns: `worklog log START-now --task TASK_ID --json`.
    Add `--note "..."` with a one-line summary of what was done if useful.
+   When the next step changes, record it: `worklog edit TASK_ID --next "..." --json`.
 4. When the activity is finished: `worklog edit TASK_ID --done --json`.
 5. If a command fails, say briefly that tracking failed and continue the work.
    Never claim success without exit 0, and never invent or backfill time.

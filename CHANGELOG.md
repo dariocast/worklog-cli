@@ -10,6 +10,10 @@ This project follows Semantic Versioning. Notable changes are recorded here.
   note once on their next prompt.
 - Board: an edited card is saved when you click or tab elsewhere, instead of
   losing the changes; Mark done and Reopen keep unsaved edits too.
+- Next step (schema 4): one line per task on what comes next, set with
+  `edit --next`, `assign --session S --next` or the board editor, and shown on
+  cards and by `show`. The chat note asks agents to keep it current. The ledger
+  is migrated in place on first use.
 
 ## [0.3.2] - 2026-10-15
 

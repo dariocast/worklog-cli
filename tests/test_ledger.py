@@ -5,7 +5,7 @@ from conftest import at
 
 from worklog_cli import spool
 from worklog_cli.errors import WorklogError
-from worklog_cli.ledger import Ledger
+from worklog_cli.ledger import SCHEMA_VERSION, Ledger
 from worklog_cli.reporting import report
 from worklog_cli.timeutil import parse_iso
 
@@ -352,11 +352,11 @@ def test_schema_2_ledger_is_migrated(tmp_path):
     connection.close()
     db = Ledger(path)
     try:
-        assert db.db.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert db.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert order(db) == ["Newer", "Old"]
         old = db.show("ACT-20260901-001")
         assert old["status"] == "done" and old["closed_at"] is None
-        assert old["description"] is None
+        assert old["description"] is None and old["next"] is None
         db.add_task(None, "Capture")
         assert order(db) == ["Capture", "Newer", "Old"]
     finally:
@@ -380,3 +380,18 @@ def test_agent_names_and_describes_the_task_in_one_command(ledger, tmp_path):
 def test_inbox_chat_is_asked_to_map_and_to_name_its_task(ledger, tmp_path):
     context = prompt(ledger, tmp_path / "elsewhere", ts("09:00"))
     assert "worklog map" in context and '--title "..." --description "..."' in context
+
+
+def test_next_step_is_set_by_agent_and_cli_without_repeating_the_note(ledger, tmp_path):
+    work = tmp_path / "work" / "repo"
+    first = prompt(ledger, work, ts("09:00"))
+    assert '--next "..."' in first
+    info = ledger.assign("claude:s1", next_step=" Write the migration test ")
+    assert info["next"] == "Write the migration test"
+    assert prompt(ledger, work, ts("09:10")) is None  # the next step is not part of the note
+    task = only_task(ledger)
+    assert task["next"] == "Write the migration test"
+    assert ledger.edit(task["id"], next_step="Ask for review")["next"] == "Ask for review"
+    assert ledger.edit(task["id"], next_step="")["next"] is None
+    with pytest.raises(WorklogError, match="--next"):
+        ledger.assign("claude:s1")

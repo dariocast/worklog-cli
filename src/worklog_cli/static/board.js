@@ -236,6 +236,7 @@ function card(task) {
     "aria-keyshortcuts": movable(task) ? "Alt+ArrowUp Alt+ArrowDown" : null,
   }, task.title),
   meta,
+  task.next ? el("div", { className: "next" }, el("span", { className: "next-label" }, "Next"), task.next) : null,
   task.description ? el("div", { className: "desc" }, task.description) : null,
   task.column === "inbox"
     ? task.directories.map((dir) => el("div", { className: "map" }, `worklog map ${quote(dir)} PROJECT`))
@@ -252,10 +253,11 @@ function editor(task) {
   const project = el("select", { className: "select" },
     task.project === "inbox" ? el("option", { value: "", selected: true }, "inbox (choose a project)") : null,
     state.data.projects.map((name) => el("option", { value: name, selected: name === task.project }, name)));
+  const next = el("input", { className: "input", value: task.next || "", placeholder: "The next thing to do", maxlength: "500" });
   const description = el("textarea", { className: "textarea", placeholder: "What and why" });
   description.value = task.description || "";
   const fields = () => {
-    const body = { title: title.value, ref: ref.value, description: description.value };
+    const body = { title: title.value, ref: ref.value, next: next.value, description: description.value };
     if (project.value && project.value !== task.project) body.project = project.value;
     return body;
   };
@@ -289,6 +291,7 @@ function editor(task) {
   },
   field("Title", title), field("Reference", ref),
   field("Project", el("div", { className: "select-wrap" }, project)),
+  field("Next step", next),
   field("Description", description),
   el("div", { className: "edit-meta" }, el("span", { className: "id" }, task.id), task.duration_seconds > 0 ? ` · ${duration(task.duration_seconds)} recorded` : ""),
   el("div", { className: "actions" },

@@ -112,6 +112,11 @@
   margin-top: var(--space-1); font-size: var(--text-sm); color: hsl(var(--muted-foreground)); white-space: pre-line;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
+.task .next { margin-top: var(--space-2); font-size: var(--text-sm); line-height: var(--leading-tight); overflow-wrap: anywhere; }
+.task .next-label {
+  margin-right: var(--space-1-5); font-size: var(--text-2xs); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em; color: hsl(var(--muted-foreground));
+}
 .task .map {
   margin-top: var(--space-2); padding: var(--space-1-5) var(--space-2); border-radius: var(--radius-sm);
   background: hsl(var(--muted)); font-family: var(--font-mono); font-size: var(--text-2xs);

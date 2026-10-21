@@ -13,16 +13,17 @@ and always exits 0.
 - Task: `{id, project, title, ref: string|null, status: "open"|"done",
   provisional_title: boolean, created_at, duration_seconds,
   description: string|null, rank: number, started: boolean,
-  closed_at: string|null}`. `rank` orders tasks manually (lower first);
-  `started` is true when the task has at least one interval. `closed_at` is
-  null for open tasks and for tasks closed before 0.3.
+  closed_at: string|null, next: string|null}`. `rank` orders tasks manually
+  (lower first); `started` is true when the task has at least one interval.
+  `closed_at` is null for open tasks and for tasks closed before 0.3. `next` is
+  the task's next step (0.4).
 - Task detail (`show`): Task plus `intervals: Interval[]` and
   `sessions: string[]` (chat keys such as `claude:ab12`).
 - Interval: `{id, task_id, project, title, started_at, ended_at,
   duration_seconds, source: "claude"|"codex"|"manual", session: string|null,
   note: string|null}`. Intervals are always closed.
 - Session: `{session, cwd, ignored, task_id, project, title, ref,
-  provisional_title, description: string|null}`.
+  provisional_title, description: string|null, next: string|null}`.
 - Report entry: `{day, task_id, key, project, ref, title, duration_seconds,
   raw_seconds, notes: string[]}`. `key` is the ref, or the project if there is
   no ref. `duration_seconds` is rounded only with `--round`.

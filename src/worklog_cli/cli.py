@@ -29,7 +29,7 @@ from worklog_cli.timeutil import (
 VALUE_OPTIONS = {
     "--db", "--title", "--project", "--task", "--ref", "--note", "--day", "--from", "--to",
     "--timezone", "--round", "--format", "--session", "--description", "--before", "--after",
-    "--port",
+    "--port", "--next",
 }  # fmt: skip
 READ_ONLY = {"list", "show", "projects", "inbox", "intervals", "report"}
 
@@ -91,6 +91,7 @@ def parser() -> Parser:
     status.add_argument("--open", action="store_true")
     edit.add_argument("--project", help="Move the task to another project")
     edit.add_argument("--description", help="Free text; empty string clears it")
+    edit.add_argument("--next", help="The next step, in one line; empty string clears it")
     order = edit.add_mutually_exclusive_group()
     order.add_argument("--before", metavar="TASK", help="Place right before another task")
     order.add_argument("--after", metavar="TASK", help="Place right after another task")
@@ -103,6 +104,7 @@ def parser() -> Parser:
     assign.add_argument("--ref")
     assign.add_argument("--project")
     assign.add_argument("--description", help="What the chat works on; empty string clears it")
+    assign.add_argument("--next", help="The task's next step; empty string clears it")
 
     mapping = commands.add_parser("map", help="Map a directory to a project, or to ignore")
     mapping.add_argument("path")
@@ -327,6 +329,7 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
             status=status,
             project=args.project,
             description=args.description,
+            next_step=args.next,
             before=args.before,
             after=args.after,
             top=args.top,
@@ -339,6 +342,7 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
             ref=args.ref,
             project=args.project,
             description=args.description,
+            next_step=args.next,
         )
     if command == "map":
         target = args.target.strip()
@@ -424,6 +428,7 @@ def human(args: argparse.Namespace, data: Any) -> str:
         return "\n".join(task_line(t) for t in data) or "No tasks."
     if command == "show":
         lines = [task_line(data)]
+        lines += [f"  next: {data['next']}"] if data["next"] else []
         lines += [f"  {interval_line(i)}" for i in data["intervals"]]
         lines += [f"  chat {s}" for s in data["sessions"]]
         return "\n".join(lines)

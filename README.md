@@ -65,6 +65,7 @@ worklog add "Fix crash" --project example-client --ref DEMO-123
 worklog list --open --unstarted          # planned work not started yet
 worklog edit ACT-20260930-001 --ref DEMO-123 --done
 worklog edit ACT-20260930-004 --project example-client --description "Asked in the call"
+worklog edit ACT-20260930-002 --next "Send the draft for review"
 worklog board                            # local web board: inbox, to do, in progress, done
 worklog inbox
 worklog intervals --today

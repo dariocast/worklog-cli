@@ -177,8 +177,8 @@ No interactive prompts except the `setup` confirmation.
 | `task rm ID [--force]` | Delete a task and its intervals; refuses recorded time without `--force`; its chats get a new task on their next turn |
 | `list [--open] [--project P]` | List tasks |
 | `show ID` | Task with intervals |
-| `edit ID [--title T] [--ref R] [--done \| --open]` | Change a task |
-| `assign --session S [--task ID] [--title T] [--description D] [--ref R] [--project P]` | Bind a chat to a task, or name, describe or move its task |
+| `edit ID [--title T] [--ref R] [--next N] [--done \| --open]` | Change a task |
+| `assign --session S [--task ID] [--title T] [--description D] [--next N] [--ref R] [--project P]` | Bind a chat to a task, or name, describe or move its task |
 | `map PATH PROJECT` / `map PATH ignore` | Map a directory; moves its inbox time |
 | `inbox` | Unassigned time by directory and session |
 | `ignore --session S` | Stop tracking a chat and discard its time |
@@ -393,6 +393,27 @@ heartbeat or manual log; derived columns at their boundaries (inbox task with
 time, task whose last interval is removed); board server tests on an ephemeral
 port for Host check, token, preflight rejection and each endpoint, with a
 temporary ledger. The page itself is checked manually in a browser.
+
+## Planning aids (0.4)
+
+Status: in development for 0.4.0. Everything above stays valid; this section
+adds to it. The goal is that the board alone answers "where are we and what
+comes next", so no hand-kept board file is needed next to the ledger.
+
+### Next step
+
+Schema 4 adds `next_step` to tasks: one line on the next thing to do, distinct
+from the description (what and why). It is a single value that each change
+replaces, so it never grows. `edit --next`, `assign --session S --next` and the
+board editor set it; an empty value clears it. The JSON field is `next`. It is
+shown on board cards and by `show`, never in reports.
+
+The injected note asks the agent to record the next step when it changes (a
+handoff, a blocker, the end of a work session). The next step is not part of
+the note itself, so setting it does not re-inject the note.
+
+Migration 3 → 4 adds the column in one transaction, like 2 → 3; a schema 2
+ledger runs both steps.
 
 ## Setup
 

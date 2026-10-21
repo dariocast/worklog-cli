@@ -35,6 +35,8 @@ What the agent is asked to do, and nothing more:
 - `worklog assign --session KEY --task ID` when the chat continues an open task
   (found with `worklog list --open --json`), for example an execution chat after
   a planning chat; put the task ID in handoffs;
+- `worklog assign --session KEY --next "..."` when the next step changes (a
+  handoff, a blocker, the end of a work session);
 - `worklog map PATH PROJECT` after asking the user, when the chat is in the
   inbox;
 - `worklog ignore --session KEY` when the user says not to track the chat.

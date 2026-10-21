@@ -21,7 +21,7 @@ from worklog_cli.errors import WorklogError
 from worklog_cli.timeline import Raw, spans, total_seconds
 from worklog_cli.timeutil import iso, parse_iso, to_local, utcnow
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 AGENTS = ("claude", "codex")
 SOURCES = (*AGENTS, "manual")
 SCHEMA = """
@@ -32,7 +32,7 @@ CREATE TABLE tasks (
  title TEXT NOT NULL CHECK(length(trim(title)) > 0), ref TEXT,
  status TEXT NOT NULL CHECK(status IN ('open','done')),
  auto_title INTEGER NOT NULL DEFAULT 0 CHECK(auto_title IN (0,1)), created_at TEXT NOT NULL,
- description TEXT, rank REAL NOT NULL DEFAULT 0, closed_at TEXT
+ description TEXT, rank REAL NOT NULL DEFAULT 0, closed_at TEXT, next_step TEXT
 );
 CREATE TABLE agent_sessions (
  agent TEXT NOT NULL, session_id TEXT NOT NULL, task_id TEXT REFERENCES tasks(id),
@@ -59,6 +59,11 @@ UPDATE tasks SET rank = (
  SELECT count(*) FROM tasks newer WHERE (newer.created_at, newer.id) > (tasks.created_at, tasks.id)
 );
 """
+# Schema 3 -> 4: the next step of a task.
+MIGRATE_4 = """
+ALTER TABLE tasks ADD COLUMN next_step TEXT;
+"""
+MIGRATIONS = {2: MIGRATE_3, 3: MIGRATE_4}  # from version -> statements
 MIN_GAP = 1e-6
 
 
@@ -100,8 +105,13 @@ class Ledger:
                     )
                 if version > SCHEMA_VERSION:
                     raise WorklogError("Database schema is newer than this CLI", "schema_version")
-                if version in (0, 2):
-                    for statement in (SCHEMA if version == 0 else MIGRATE_3).split(";"):
+                if version < SCHEMA_VERSION:
+                    steps = (
+                        [SCHEMA]
+                        if version == 0
+                        else [MIGRATIONS[v] for v in range(version, SCHEMA_VERSION)]
+                    )
+                    for statement in ";".join(steps).split(";"):
                         if statement.strip():
                             self.db.execute(statement)
                     self.db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -261,6 +271,7 @@ class Ledger:
                 "rank": r["rank"],
                 "started": r["id"] in started,
                 "closed_at": r["closed_at"],
+                "next": r["next_step"],
             }
             for r in rows
         ]
@@ -310,6 +321,7 @@ class Ledger:
         status: str | None = None,
         project: str | None = None,
         description: str | None = None,
+        next_step: str | None = None,
         before: str | None = None,
         after: str | None = None,
         top: bool = False,
@@ -323,10 +335,7 @@ class Ledger:
                     "UPDATE tasks SET title = ?, auto_title = 0 WHERE id = ?",
                     (nonempty(title, "Title"), task_id),
                 )
-            if ref is not None:
-                self.db.execute(
-                    "UPDATE tasks SET ref = ? WHERE id = ?", (ref.strip() or None, task_id)
-                )
+            self._set_text(task_id, ref=ref, description=description, next_step=next_step)
             if status is not None:
                 self._set_status(task_id, status)
             if project is not None:
@@ -336,11 +345,6 @@ class Ledger:
                     "UPDATE tasks SET project_id = ? WHERE id = ?",
                     (self._project_id(project.strip()), task_id),
                 )
-            if description is not None:
-                self.db.execute(
-                    "UPDATE tasks SET description = ? WHERE id = ?",
-                    (description.strip() or None, task_id),
-                )
             if top:
                 self.db.execute(
                     "UPDATE tasks SET rank = (SELECT min(rank) - 1 FROM tasks) WHERE id = ?",
@@ -349,6 +353,14 @@ class Ledger:
             elif before is not None or after is not None:
                 self._place(task_id, before, after)
         return self.show(task_id)
+
+    def _set_text(self, task_id: str, **values: str | None) -> None:
+        """Set optional free-text columns; an empty value clears one, None leaves it."""
+        for column, value in values.items():
+            if value is not None:
+                self.db.execute(
+                    f"UPDATE tasks SET {column} = ? WHERE id = ?", (value.strip() or None, task_id)
+                )
 
     def _set_status(self, task_id: str, status: str) -> None:
         """Done sets the closing time once; reopening clears it."""
@@ -588,7 +600,7 @@ class Ledger:
     def session_info(self, agent: str, session_id: str) -> dict[str, Any]:
         row = self.db.execute(
             "SELECT s.agent, s.session_id, s.cwd, s.ignored, t.id AS task_id, t.title, t.ref, "
-            "t.auto_title, t.description, p.name AS project FROM agent_sessions s "
+            "t.auto_title, t.description, t.next_step, p.name AS project FROM agent_sessions s "
             "LEFT JOIN tasks t ON t.id = s.task_id LEFT JOIN projects p ON p.id = t.project_id "
             "WHERE s.agent = ? AND s.session_id = ?",
             (agent, session_id),
@@ -605,6 +617,7 @@ class Ledger:
             "ref": row["ref"],
             "provisional_title": bool(row["auto_title"]),
             "description": row["description"],
+            "next": row["next_step"],
         }
 
     def _context_if_changed(self, agent: str, session_id: str) -> str | None:
@@ -628,11 +641,12 @@ class Ledger:
         ref: str | None = None,
         project: str | None = None,
         description: str | None = None,
+        next_step: str | None = None,
     ) -> dict[str, Any]:
         agent, session_id = parse_session(key)
-        if all(v is None for v in (task_id, title, ref, project, description)):
+        if all(v is None for v in (task_id, title, ref, project, description, next_step)):
             raise WorklogError(
-                "Nothing to assign; use --task, --title, --description, --ref or --project"
+                "Nothing to assign; use --task, --title, --description, --next, --ref or --project"
             )
         with self.transaction():
             session = self._require_session(agent, session_id)
@@ -656,15 +670,7 @@ class Ledger:
                     "UPDATE tasks SET title = ?, auto_title = 0 WHERE id = ?",
                     (nonempty(title, "Title"), current),
                 )
-            if ref is not None:
-                self.db.execute(
-                    "UPDATE tasks SET ref = ? WHERE id = ?", (ref.strip() or None, current)
-                )
-            if description is not None:
-                self.db.execute(
-                    "UPDATE tasks SET description = ? WHERE id = ?",
-                    (description.strip() or None, current),
-                )
+            self._set_text(current, ref=ref, description=description, next_step=next_step)
             if project is not None:
                 if project in RESERVED:
                     raise WorklogError(f"{project!r} is reserved; use worklog map or ignore")

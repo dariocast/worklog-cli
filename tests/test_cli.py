@@ -213,3 +213,6 @@ def test_capture_and_triage_from_the_cli(isolated):
     ]
     assert data(run("list", "--started", "--json")) == []
     assert "Check the export format" in run("list", "--open").stdout
+    planned = data(run("edit", second["id"], "--next", "Draft the notes", "--json"))
+    assert planned["next"] == "Draft the notes"
+    assert "next: Draft the notes" in run("show", second["id"]).stdout
