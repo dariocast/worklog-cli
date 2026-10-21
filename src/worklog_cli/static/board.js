@@ -6,6 +6,7 @@ const COLUMNS = [
   ["inbox", "Inbox"],
   ["todo", "To do"],
   ["progress", "In progress"],
+  ["waiting", "Waiting"],
   ["done", "Done"],
 ];
 const LABELS = Object.fromEntries(COLUMNS);
@@ -13,6 +14,7 @@ const STATUS_BADGE = {
   inbox: "badge badge-outline",
   todo: "badge badge-secondary",
   progress: "badge badge-success",
+  waiting: "badge badge-warning",
   done: "badge badge-muted",
 };
 const state = {
@@ -195,6 +197,7 @@ function renderBoard() {
     } else {
       column.append(...tasks.map(card));
       if (key === "inbox" && !tasks.length) column.append(el("p", { className: "hint" }, "Nothing to triage."));
+      if (key === "waiting" && !tasks.length) column.append(el("p", { className: "hint" }, "Nothing waiting on others."));
       if (key === "done" && !tasks.length) column.append(el("p", { className: "hint" }, "Nothing closed recently."));
       if (key === "done") column.append(el("div", { className: "column-foot" }, doneToggle()));
     }
@@ -210,6 +213,7 @@ function card(task) {
   const meta = el("div", { className: "meta" },
     task.column !== "todo" && task.column !== "inbox" ? el("span", { className: "badge badge-outline" }, task.project) : null,
     task.ref ? el("span", { className: "badge badge-secondary" }, task.ref) : null,
+    task.dropped ? el("span", { className: "badge badge-muted" }, "Dropped") : null,
     task.duration_seconds > 0 ? el("span", { className: "time" }, duration(task.duration_seconds)) : null);
   const node = el("article", {
     className: "card task", draggable: "true", "data-id": task.id,
@@ -301,6 +305,15 @@ function editor(task) {
       type: "button", className: "btn btn-sm btn-outline",
       onclick: () => { close(); change("PATCH", `/api/tasks/${task.id}`, { ...fields(), status: done ? "open" : "done" }); },
     }, done ? "Reopen" : "Mark done"),
+    done || task.project === "inbox" ? null : el("button", {
+      type: "button", className: "btn btn-sm btn-outline",
+      title: task.waiting ? "Back to work" : "It depends on someone else",
+      onclick: () => { close(); change("PATCH", `/api/tasks/${task.id}`, { ...fields(), waiting: !task.waiting }); },
+    }, task.waiting ? "Resume" : "Waiting"),
+    done ? null : el("button", {
+      type: "button", className: "btn btn-sm btn-outline", title: "Close without doing it",
+      onclick: () => { close(); change("PATCH", `/api/tasks/${task.id}`, { ...fields(), status: "dropped" }); },
+    }, "Drop"),
     movable(task) ? [
       el("button", {
         type: "button", className: "btn btn-sm btn-outline", "data-action": "up",
@@ -337,21 +350,31 @@ document.addEventListener("focusin", leaveEditor);
 function plan(task, target) {
   if (target.anchor && target.anchor.id === task.id) return { skip: true };
   const position = target.anchor ? { [target.position]: target.anchor.id } : {};
-  if (task.column === "done") return target.column === "done" ? { skip: true } : { body: { status: "open" } };
+  const reorder = target.anchor ? { body: position } : { skip: true };
+  const waiting = task.column === "waiting";
+  if (target.column === "waiting" && task.column === "inbox") return { reject: "Choose a project before waiting on someone." };
+  if (task.column === "done") {
+    if (target.column === "done") return { skip: true };
+    return { body: target.column === "waiting" ? { status: "open", waiting: true } : { status: "open" } };
+  }
   if (target.column === "done") return { body: { status: "done" } };
+  if (target.column === "waiting") return waiting ? reorder : { body: { waiting: true, ...position } };
   if (target.column === "inbox") {
     if (task.column !== "inbox") return { reject: "Tasks never go back to the inbox; choose the right project." };
-    return target.anchor ? { body: position } : { skip: true };
+    return reorder;
   }
   if (target.column === "progress") {
+    if (waiting && task.started) return { body: { waiting: false, ...position } };
     if (task.column !== "progress") return { reject: "Only recorded time puts a task in progress." };
-    return target.anchor ? { body: position } : { skip: true };
+    return reorder;
   }
   // To do
   if (task.column === "progress") return { reject: "To change the project of a task with time, edit its card." };
-  if (!target.project) return { skip: true };
-  if (target.project !== task.project) return { body: { project: target.project, ...position } };
-  return target.anchor ? { body: position } : { skip: true };
+  if (waiting && task.started) return { reject: "A task with recorded time resumes in progress." };
+  const resume = waiting ? { waiting: false } : {};
+  if (!target.project) return waiting ? { body: resume } : { skip: true };
+  if (target.project !== task.project) return { body: { ...resume, project: target.project, ...position } };
+  return waiting ? { body: { ...resume, ...position } } : reorder;
 }
 
 function dropZone(node, target) {

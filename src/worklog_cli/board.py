@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from worklog_cli import config
 from worklog_cli.errors import WorklogError
-from worklog_cli.ledger import Ledger
+from worklog_cli.ledger import STATUSES, Ledger
 from worklog_cli.timeutil import parse_iso
 
 DONE_DAYS = 14
@@ -44,6 +44,8 @@ def column(task: dict[str, Any]) -> str:
         return "done"
     if task["project"] == config.INBOX:
         return "inbox"
+    if task["waiting"]:
+        return "waiting"
     return "progress" if task["started"] else "todo"
 
 
@@ -194,8 +196,11 @@ def dispatch(
         task_id = path[len(prefix) :]
         if method == "PATCH":
             status = text_field(body, "status")
-            if status not in (None, "open", "done"):
-                raise WorklogError("status must be open or done", "validation_error")
+            if status not in (None, *STATUSES):
+                raise WorklogError("status must be open, done or dropped", "validation_error")
+            waiting = body.get("waiting")
+            if waiting is not None and not isinstance(waiting, bool):
+                raise WorklogError("waiting must be a boolean", "validation_error")
             return ledger.edit(
                 task_id,
                 title=text_field(body, "title"),
@@ -204,6 +209,7 @@ def dispatch(
                 project=text_field(body, "project"),
                 description=text_field(body, "description"),
                 next_step=text_field(body, "next"),
+                waiting=waiting,
                 before=text_field(body, "before"),
                 after=text_field(body, "after"),
                 top=body.get("top") is True,

@@ -24,6 +24,7 @@ from worklog_cli.timeutil import iso, parse_iso, to_local, utcnow
 SCHEMA_VERSION = 4
 AGENTS = ("claude", "codex")
 SOURCES = (*AGENTS, "manual")
+STATUSES = ("open", "done", "dropped")  # dropped: closed without doing it
 SCHEMA = """
 CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
 CREATE TABLE counters (day TEXT PRIMARY KEY, value INTEGER NOT NULL);
@@ -32,7 +33,9 @@ CREATE TABLE tasks (
  title TEXT NOT NULL CHECK(length(trim(title)) > 0), ref TEXT,
  status TEXT NOT NULL CHECK(status IN ('open','done')),
  auto_title INTEGER NOT NULL DEFAULT 0 CHECK(auto_title IN (0,1)), created_at TEXT NOT NULL,
- description TEXT, rank REAL NOT NULL DEFAULT 0, closed_at TEXT, next_step TEXT
+ description TEXT, rank REAL NOT NULL DEFAULT 0, closed_at TEXT, next_step TEXT,
+ waiting INTEGER NOT NULL DEFAULT 0 CHECK(waiting IN (0,1)),
+ dropped INTEGER NOT NULL DEFAULT 0 CHECK(dropped IN (0,1))
 );
 CREATE TABLE agent_sessions (
  agent TEXT NOT NULL, session_id TEXT NOT NULL, task_id TEXT REFERENCES tasks(id),
@@ -59,9 +62,11 @@ UPDATE tasks SET rank = (
  SELECT count(*) FROM tasks newer WHERE (newer.created_at, newer.id) > (tasks.created_at, tasks.id)
 );
 """
-# Schema 3 -> 4: the next step of a task.
+# Schema 3 -> 4: next step, waiting on someone else, closed without doing it.
 MIGRATE_4 = """
 ALTER TABLE tasks ADD COLUMN next_step TEXT;
+ALTER TABLE tasks ADD COLUMN waiting INTEGER NOT NULL DEFAULT 0 CHECK(waiting IN (0,1));
+ALTER TABLE tasks ADD COLUMN dropped INTEGER NOT NULL DEFAULT 0 CHECK(dropped IN (0,1));
 """
 MIGRATIONS = {2: MIGRATE_3, 3: MIGRATE_4}  # from version -> statements
 MIN_GAP = 1e-6
@@ -272,6 +277,8 @@ class Ledger:
                 "started": r["id"] in started,
                 "closed_at": r["closed_at"],
                 "next": r["next_step"],
+                "waiting": bool(r["waiting"]),
+                "dropped": bool(r["dropped"]),
             }
             for r in rows
         ]
@@ -322,6 +329,7 @@ class Ledger:
         project: str | None = None,
         description: str | None = None,
         next_step: str | None = None,
+        waiting: bool | None = None,
         before: str | None = None,
         after: str | None = None,
         top: bool = False,
@@ -345,6 +353,8 @@ class Ledger:
                     "UPDATE tasks SET project_id = ? WHERE id = ?",
                     (self._project_id(project.strip()), task_id),
                 )
+            if waiting is not None:
+                self._set_waiting(task_id, waiting)
             if top:
                 self.db.execute(
                     "UPDATE tasks SET rank = (SELECT min(rank) - 1 FROM tasks) WHERE id = ?",
@@ -363,12 +373,33 @@ class Ledger:
                 )
 
     def _set_status(self, task_id: str, status: str) -> None:
-        """Done sets the closing time once; reopening clears it."""
+        """Closing (done or dropped) sets the closing time once and ends waiting; reopening
+        clears both closing fields."""
+        if status not in STATUSES:
+            raise WorklogError(f"Unknown status {status!r}", "validation_error")
+        closed = status != "open"
         self.db.execute(
-            "UPDATE tasks SET closed_at = CASE WHEN ? = 'done' THEN "
-            "(CASE WHEN status = 'done' THEN closed_at ELSE ? END) END, status = ? WHERE id = ?",
-            (status, self.now(), status, task_id),
+            "UPDATE tasks SET closed_at = CASE WHEN ? THEN "
+            "(CASE WHEN status = 'done' THEN closed_at ELSE ? END) END, "
+            "status = ?, dropped = ?, waiting = waiting * (1 - ?) WHERE id = ?",
+            (
+                closed,
+                self.now(),
+                "done" if closed else "open",
+                status == "dropped",
+                closed,
+                task_id,
+            ),
         )
+
+    def _set_waiting(self, task_id: str, waiting: bool) -> None:
+        """Only an open task in a project can wait on someone else."""
+        task = self._task_rows("WHERE t.id = ?", (task_id,))[0]
+        if waiting and task["status"] == "done":
+            raise WorklogError("Reopen the task before marking it as waiting")
+        if waiting and task["project"] == INBOX:
+            raise WorklogError("Choose a project before marking the task as waiting")
+        self.db.execute("UPDATE tasks SET waiting = ? WHERE id = ?", (int(waiting), task_id))
 
     def _place(self, task_id: str, before: str | None, after: str | None) -> None:
         """Move a task right before or after another one in the global manual order."""
@@ -557,10 +588,10 @@ class Ledger:
                 session = self._open_session(agent, session_id, cwd, stamp)
             if session["ignored"]:
                 return None
-            # A new turn means the work is not over: a closed task is reopened.
+            # A new turn means someone is working on it: a closed or waiting task is open again.
             self.db.execute(
-                "UPDATE tasks SET status = 'open', closed_at = NULL "
-                "WHERE id = ? AND status = 'done'",
+                "UPDATE tasks SET status = 'open', closed_at = NULL, dropped = 0, waiting = 0 "
+                "WHERE id = ? AND (status = 'done' OR waiting = 1)",
                 (session["task_id"],),
             )
             self.db.execute(
@@ -642,11 +673,14 @@ class Ledger:
         project: str | None = None,
         description: str | None = None,
         next_step: str | None = None,
+        waiting: bool | None = None,
     ) -> dict[str, Any]:
         agent, session_id = parse_session(key)
-        if all(v is None for v in (task_id, title, ref, project, description, next_step)):
+        values = (task_id, title, ref, project, description, next_step, waiting)
+        if all(v is None for v in values):
             raise WorklogError(
-                "Nothing to assign; use --task, --title, --description, --next, --ref or --project"
+                "Nothing to assign; use --task, --title, --description, --next, --waiting, "
+                "--ref or --project"
             )
         with self.transaction():
             session = self._require_session(agent, session_id)
@@ -678,6 +712,8 @@ class Ledger:
                     "UPDATE tasks SET project_id = ? WHERE id = ?",
                     (self._project_id(project), current),
                 )
+            if waiting is not None:
+                self._set_waiting(current, waiting)
         return self.session_info(agent, session_id)
 
     def _attribute_from_directory(self, task_id: str, cwd: str) -> None:

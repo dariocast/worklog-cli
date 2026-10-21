@@ -25,7 +25,8 @@ def render(info: dict[str, Any]) -> str:
         'To note something for later, run `worklog add "..."` (add `--project P` if known);'
         " it does not change this chat's task.",
         "When the next step changes (a handoff, a blocker, the end of a work session), record it"
-        f' in one line: `worklog assign --session {session} --next "..."`.',
+        f' in one line: `worklog assign --session {session} --next "..."`; add `--waiting` when'
+        " the task now depends on someone outside this chat.",
         "Put the task ID in any handoff. If the user says not to track this chat, run "
         f"`worklog ignore --session {session}`. Do not otherwise mention WorkLog.",
     ]

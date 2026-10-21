@@ -177,8 +177,8 @@ No interactive prompts except the `setup` confirmation.
 | `task rm ID [--force]` | Delete a task and its intervals; refuses recorded time without `--force`; its chats get a new task on their next turn |
 | `list [--open] [--project P]` | List tasks |
 | `show ID` | Task with intervals |
-| `edit ID [--title T] [--ref R] [--next N] [--done \| --open]` | Change a task |
-| `assign --session S [--task ID] [--title T] [--description D] [--next N] [--ref R] [--project P]` | Bind a chat to a task, or name, describe or move its task |
+| `edit ID [--title T] [--ref R] [--next N] [--done \| --drop \| --open] [--waiting \| --no-waiting]` | Change a task |
+| `assign --session S [--task ID] [--title T] [--description D] [--next N] [--waiting \| --no-waiting] [--ref R] [--project P]` | Bind a chat to a task, or name, describe or move its task |
 | `map PATH PROJECT` / `map PATH ignore` | Map a directory; moves its inbox time |
 | `inbox` | Unassigned time by directory and session |
 | `ignore --session S` | Stop tracking a chat and discard its time |
@@ -412,7 +412,34 @@ The injected note asks the agent to record the next step when it changes (a
 handoff, a blocker, the end of a work session). The next step is not part of
 the note itself, so setting it does not re-inject the note.
 
-Migration 3 → 4 adds the column in one transaction, like 2 → 3; a schema 2
+### Waiting and dropped
+
+Two states a derived board cannot infer:
+
+- **Waiting**: an open task in a project that depends on someone outside the
+  team or the chat. Stored as the `waiting` flag; the reason goes in the next
+  step. It is a fifth board column, between In progress and Done.
+- **Dropped**: closed without doing it (not needed, superseded, works as
+  intended). Stored as the `dropped` flag on a `done` task, so `status` keeps its
+  two values and JSON consumers that test `status == "done"` keep working.
+  Dropped tasks stay in the Done column with a "Dropped" badge. Their recorded
+  time is still reported: time worked is time worked.
+
+| Change | CLI / agent | Board |
+| --- | --- | --- |
+| open → waiting | `edit --waiting`, `assign --session S --waiting` | drop on Waiting; Waiting button |
+| waiting → open | `edit --no-waiting`; a new agent turn on a bound chat | drag to To do (no time) or In progress (with time); Resume button |
+| open → dropped | `edit --drop` | Drop button |
+| dropped → done | `edit --done` | Mark done is not offered on closed tasks; reopen first |
+| dropped → open | `edit --open`; a new agent turn on a bound chat | drag out of Done; Reopen |
+
+Inbox tasks cannot wait: choose a project first. Closing a task (done or
+dropped) clears waiting, and a closed task must be reopened before it can wait
+(`edit --open --waiting` does both). A new agent turn clears both flags in the
+same transaction as reopening, for the same reason: someone is working on it.
+Heartbeats and manual logs change neither.
+
+Migration 3 → 4 adds the columns in one transaction, like 2 → 3; a schema 2
 ledger runs both steps.
 
 ## Setup

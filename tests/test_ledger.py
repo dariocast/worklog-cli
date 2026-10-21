@@ -395,3 +395,42 @@ def test_next_step_is_set_by_agent_and_cli_without_repeating_the_note(ledger, tm
     assert ledger.edit(task["id"], next_step="")["next"] is None
     with pytest.raises(WorklogError, match="--next"):
         ledger.assign("claude:s1")
+
+
+def test_waiting_and_dropped_tasks(ledger):
+    ledger.add_project("example-project")
+    capture = ledger.add_task(None, "Capture")
+    with pytest.raises(WorklogError, match="Choose a project"):
+        ledger.edit(capture["id"], waiting=True)
+    task = ledger.add_task("example-project", "Ask for the test account")
+    waiting = ledger.edit(task["id"], waiting=True, next_step="Reply from the client")
+    assert waiting["waiting"] and waiting["status"] == "open"
+    done = ledger.edit(task["id"], status="done")
+    assert done["status"] == "done" and not done["waiting"] and not done["dropped"]
+    with pytest.raises(WorklogError, match="Reopen"):
+        ledger.edit(task["id"], waiting=True)
+    assert ledger.edit(task["id"], status="open", waiting=True)["waiting"]
+    dropped = ledger.edit(task["id"], status="dropped")
+    assert dropped["status"] == "done" and dropped["dropped"] and dropped["closed_at"]
+    assert not dropped["waiting"]
+    assert not ledger.edit(task["id"], status="done")["dropped"]
+    reopened = ledger.edit(task["id"], status="open")
+    assert not reopened["dropped"] and reopened["closed_at"] is None
+    with pytest.raises(WorklogError, match="Unknown status"):
+        ledger.edit(task["id"], status="maybe")
+
+
+def test_agent_turn_resumes_waiting_and_reopens_dropped_tasks(ledger, tmp_path):
+    work = tmp_path / "work" / "repo"
+    prompt(ledger, work, ts("09:00"))
+    info = ledger.assign("claude:s1", next_step="Wait for the review", waiting=True)
+    task_id = info["task_id"]
+    assert ledger.show(task_id)["waiting"]
+    activity(ledger, ts("09:05"))  # heartbeats change nothing
+    assert ledger.show(task_id)["waiting"]
+    prompt(ledger, work, ts("10:00"))
+    assert not ledger.show(task_id)["waiting"]
+    ledger.edit(task_id, status="dropped")
+    prompt(ledger, work, ts("11:00"))
+    task = ledger.show(task_id)
+    assert task["status"] == "open" and not task["dropped"]

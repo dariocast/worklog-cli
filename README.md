@@ -66,7 +66,9 @@ worklog list --open --unstarted          # planned work not started yet
 worklog edit ACT-20260930-001 --ref DEMO-123 --done
 worklog edit ACT-20260930-004 --project example-client --description "Asked in the call"
 worklog edit ACT-20260930-002 --next "Send the draft for review"
-worklog board                            # local web board: inbox, to do, in progress, done
+worklog edit ACT-20260930-002 --waiting --next "Reply from the client"
+worklog edit ACT-20260930-005 --drop      # closed without doing it
+worklog board                            # local web board: inbox, to do, in progress, waiting, done
 worklog inbox
 worklog intervals --today
 worklog move 3f2a9c1e --task ACT-20260930-002
@@ -83,8 +85,8 @@ none), the title, the duration and the notes:
 Total 3h30
 ```
 
-`worklog board` opens a page on `127.0.0.1` with four columns (Inbox, To do,
-In progress, Done) and a List view with time per project. Type in the field at
+`worklog board` opens a page on `127.0.0.1` with five columns (Inbox, To do,
+In progress, Waiting, Done) and a List view with time per project. Type in the field at
 the top to note something (`@project text` files it directly), drag cards to
 triage, reorder or close them, and click a card to edit it. A task is "in
 progress" only once it has recorded time, from a chat bound to it or from

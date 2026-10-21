@@ -14,6 +14,10 @@ This project follows Semantic Versioning. Notable changes are recorded here.
   `edit --next`, `assign --session S --next` or the board editor, and shown on
   cards and by `show`. The chat note asks agents to keep it current. The ledger
   is migrated in place on first use.
+- Waiting and dropped tasks: `edit --waiting` (or `assign --waiting`) parks an
+  open task that depends on someone else in a new Waiting column; `edit --drop`
+  closes a task without doing it, shown in Done with a "Dropped" badge. A new
+  agent turn on the task clears both. JSON tasks gain `waiting` and `dropped`.
 
 ## [0.3.2] - 2026-10-15
 

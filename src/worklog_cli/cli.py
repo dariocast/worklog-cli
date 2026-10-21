@@ -88,7 +88,9 @@ def parser() -> Parser:
     edit.add_argument("--ref", help="Tracker key; empty string clears it")
     status = edit.add_mutually_exclusive_group()
     status.add_argument("--done", action="store_true")
+    status.add_argument("--drop", action="store_true", help="Close without doing it")
     status.add_argument("--open", action="store_true")
+    waiting_option(edit)
     edit.add_argument("--project", help="Move the task to another project")
     edit.add_argument("--description", help="Free text; empty string clears it")
     edit.add_argument("--next", help="The next step, in one line; empty string clears it")
@@ -105,6 +107,7 @@ def parser() -> Parser:
     assign.add_argument("--project")
     assign.add_argument("--description", help="What the chat works on; empty string clears it")
     assign.add_argument("--next", help="The task's next step; empty string clears it")
+    waiting_option(assign)
 
     mapping = commands.add_parser("map", help="Map a directory to a project, or to ignore")
     mapping.add_argument("path")
@@ -141,6 +144,14 @@ def parser() -> Parser:
     web.add_argument("--port", type=int, default=0, help="Default: a free port")
     web.add_argument("--no-open", action="store_true", help="Do not open a browser")
     return root
+
+
+def waiting_option(command: argparse.ArgumentParser) -> None:
+    command.add_argument(
+        "--waiting",
+        action=argparse.BooleanOptionalAction,
+        help="The task waits on someone else; --no-waiting resumes it",
+    )
 
 
 def new_task(command: argparse.ArgumentParser) -> None:
@@ -321,7 +332,7 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
     if command == "show":
         return ledger.show(args.task_id)
     if command == "edit":
-        status = "done" if args.done else "open" if args.open else None
+        status = "done" if args.done else "dropped" if args.drop else "open" if args.open else None
         return ledger.edit(
             args.task_id,
             title=args.title,
@@ -330,6 +341,7 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
             project=args.project,
             description=args.description,
             next_step=args.next,
+            waiting=args.waiting,
             before=args.before,
             after=args.after,
             top=args.top,
@@ -343,6 +355,7 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
             project=args.project,
             description=args.description,
             next_step=args.next,
+            waiting=args.waiting,
         )
     if command == "map":
         target = args.target.strip()
@@ -405,10 +418,16 @@ def interval_line(i: dict[str, Any]) -> str:
     )
 
 
+def task_state(t: dict[str, Any]) -> str:
+    if t["status"] == "done":
+        return "dropped" if t["dropped"] else "done"
+    return "waiting" if t["waiting"] else "open"
+
+
 def task_line(t: dict[str, Any]) -> str:
     ref = f" [{t['ref']}]" if t["ref"] else ""
     return (
-        f"{t['id']}  {t['status']:<4}  {t['project']}{ref}  {t['title']}  "
+        f"{t['id']}  {task_state(t):<7}  {t['project']}{ref}  {t['title']}  "
         f"{human_duration(t['duration_seconds'])}"
     )
 

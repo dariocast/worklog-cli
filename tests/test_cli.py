@@ -216,3 +216,7 @@ def test_capture_and_triage_from_the_cli(isolated):
     planned = data(run("edit", second["id"], "--next", "Draft the notes", "--json"))
     assert planned["next"] == "Draft the notes"
     assert "next: Draft the notes" in run("show", second["id"]).stdout
+    waiting = data(run("edit", second["id"], "--waiting", "--json"))
+    assert waiting["waiting"] and "waiting" in run("list", "--open").stdout
+    assert not data(run("edit", second["id"], "--no-waiting", "--json"))["waiting"]
+    assert data(run("edit", second["id"], "--drop", "--json"))["dropped"]

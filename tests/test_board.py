@@ -149,3 +149,20 @@ def test_inbox_cards_show_their_directories(ledger, tmp_path):
     )
     (task,) = board_data(ledger)["tasks"]
     assert task["column"] == "inbox" and task["directories"] == [str(tmp_path / "elsewhere")]
+
+
+def test_waiting_column_and_dropped_status(server):
+    ledger = Ledger(server.db)
+    ledger.add_project("example-project")
+    task = ledger.add_task("example-project", "Ask for access")
+    ledger.close()
+    status, body = call(server, "PATCH", f"/api/tasks/{task['id']}", {"waiting": True})
+    assert status == 200 and body["data"]["waiting"]
+    _, board = call(server, "GET", "/api/board")
+    assert [t["column"] for t in board["data"]["tasks"]] == ["waiting"]
+    status, _ = call(server, "PATCH", f"/api/tasks/{task['id']}", {"waiting": "yes"})
+    assert status == 400
+    _, dropped = call(server, "PATCH", f"/api/tasks/{task['id']}", {"status": "dropped"})
+    assert dropped["data"]["dropped"] and dropped["data"]["status"] == "done"
+    _, board = call(server, "GET", "/api/board")
+    assert [t["column"] for t in board["data"]["tasks"]] == ["done"]

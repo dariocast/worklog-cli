@@ -50,7 +50,10 @@
   .columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (min-width: 1080px) {  /* ds-allow-hardcode: breakpoint */
-  .columns { grid-template-columns: repeat(4, minmax(var(--column-min), 1fr)); }
+  .columns { grid-template-columns: repeat(3, minmax(var(--column-min), 1fr)); }
+}
+@media (min-width: 1360px) {  /* ds-allow-hardcode: breakpoint */
+  .columns { grid-template-columns: repeat(5, minmax(var(--column-min), 1fr)); }
 }
 
 /* Columns */
@@ -70,6 +73,7 @@
 }
 .column[data-column="progress"] .dot { background: hsl(var(--success)); }
 .column[data-column="todo"] .dot { background: hsl(var(--foreground) / 0.7); }
+.column[data-column="waiting"] .dot { background: hsl(var(--warning)); }
 .column-head .badge { margin-left: auto; }
 .hint { padding: var(--space-4) var(--space-2); text-align: center; font-size: var(--text-sm); color: hsl(var(--muted-foreground)); }
 .column-foot { display: flex; justify-content: center; padding-top: var(--space-1); }
