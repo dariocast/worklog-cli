@@ -94,6 +94,9 @@ def parser() -> Parser:
     edit.add_argument("--project", help="Move the task to another project")
     edit.add_argument("--description", help="Free text; empty string clears it")
     edit.add_argument("--next", help="The next step, in one line; empty string clears it")
+    edit.add_argument(
+        "--clear-original", action="store_true", help="Remove the original note of a capture"
+    )
     order = edit.add_mutually_exclusive_group()
     order.add_argument("--before", metavar="TASK", help="Place right before another task")
     order.add_argument("--after", metavar="TASK", help="Place right after another task")
@@ -155,7 +158,9 @@ def waiting_option(command: argparse.ArgumentParser) -> None:
 
 
 def new_task(command: argparse.ArgumentParser) -> None:
-    command.add_argument("title", nargs="?", metavar="TITLE")
+    command.add_argument(
+        "title", nargs="?", metavar="TITLE", help="First line: title; - reads the text from stdin"
+    )
     command.add_argument("--title", dest="title_option", metavar="TITLE")
     command.add_argument("--project", help="Default: inbox")
     command.add_argument("--ref")
@@ -165,6 +170,8 @@ def new_task(command: argparse.ArgumentParser) -> None:
 def task_title(args: argparse.Namespace) -> str:
     if (args.title is None) == (args.title_option is None):
         raise WorklogError("Give the title once, as argument or with --title", "usage_error")
+    if args.title == "-":
+        return sys.stdin.read()
     return str(args.title if args.title is not None else args.title_option)
 
 
@@ -342,6 +349,7 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
             description=args.description,
             next_step=args.next,
             waiting=args.waiting,
+            clear_original=args.clear_original,
             before=args.before,
             after=args.after,
             top=args.top,
@@ -448,6 +456,11 @@ def human(args: argparse.Namespace, data: Any) -> str:
     if command == "show":
         lines = [task_line(data)]
         lines += [f"  next: {data['next']}"] if data["next"] else []
+        if data["original"]:
+            lines += [
+                "  original note:",
+                *(f"    {line}" for line in data["original"].splitlines()),
+            ]
         lines += [f"  {interval_line(i)}" for i in data["intervals"]]
         lines += [f"  chat {s}" for s in data["sessions"]]
         return "\n".join(lines)

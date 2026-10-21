@@ -14,11 +14,12 @@ and always exits 0.
   provisional_title: boolean, created_at, duration_seconds,
   description: string|null, rank: number, started: boolean,
   closed_at: string|null, next: string|null, waiting: boolean,
-  dropped: boolean}`. `rank` orders tasks manually (lower first); `started` is
+  dropped: boolean, original: string|null}`. `rank` orders tasks manually (lower first); `started` is
   true when the task has at least one interval. `closed_at` is null for open
   tasks and for tasks closed before 0.3. `next` is the task's next step,
-  `waiting` marks an open task that depends on someone else, and `dropped` a
-  done task closed without doing it (all 0.4).
+  `waiting` marks an open task that depends on someone else, `dropped` a
+  done task closed without doing it, and `original` holds the verbatim text of
+  a multi-line capture (all 0.4).
 - Task detail (`show`): Task plus `intervals: Interval[]` and
   `sessions: string[]` (chat keys such as `claude:ab12`).
 - Interval: `{id, task_id, project, title, started_at, ended_at,

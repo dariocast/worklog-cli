@@ -220,3 +220,11 @@ def test_capture_and_triage_from_the_cli(isolated):
     assert waiting["waiting"] and "waiting" in run("list", "--open").stdout
     assert not data(run("edit", second["id"], "--no-waiting", "--json"))["waiting"]
     assert data(run("edit", second["id"], "--drop", "--json"))["dropped"]
+
+
+def test_capture_from_stdin_keeps_the_original_note(isolated):
+    note = "Review the export\nCSV with totals, asked in the call.\n"
+    task = data(run("add", "-", "--json", stdin=note))
+    assert task["title"] == "Review the export" and task["original"] == note.strip()
+    assert "original note:" in run("show", task["id"]).stdout
+    assert data(run("edit", task["id"], "--clear-original", "--json"))["original"] is None

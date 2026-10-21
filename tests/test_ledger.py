@@ -434,3 +434,16 @@ def test_agent_turn_resumes_waiting_and_reopens_dropped_tasks(ledger, tmp_path):
     prompt(ledger, work, ts("11:00"))
     task = ledger.show(task_id)
     assert task["status"] == "open" and not task["dropped"]
+
+
+def test_multi_line_capture_keeps_its_original_note(ledger):
+    text = "  Call back about the export\nThey need CSV with totals.\n\nAsked on Monday.  "
+    capture = ledger.add_task(None, text)
+    assert capture["title"] == "Call back about the export"
+    assert capture["original"] == text.strip()
+    assert ledger.add_task(None, "Single line")["original"] is None
+    renamed = ledger.edit(capture["id"], title="Export with totals")
+    assert renamed["original"] == text.strip()  # never rewritten
+    assert ledger.edit(capture["id"], clear_original=True)["original"] is None
+    with pytest.raises(WorklogError, match="Title"):
+        ledger.add_task(None, "\n  \n")

@@ -62,6 +62,7 @@ worklog log 1h30 --project example-client --title "Planning meeting"
 worklog log 09:00-10:30 --day yesterday --task ACT-20260930-001 --note "Review"
 worklog add "Check the export format"     # note it for later, in the inbox
 worklog add "Fix crash" --project example-client --ref DEMO-123
+worklog add - < notes.txt                 # first line: title; the whole text is kept
 worklog list --open --unstarted          # planned work not started yet
 worklog edit ACT-20260930-001 --ref DEMO-123 --done
 worklog edit ACT-20260930-004 --project example-client --description "Asked in the call"

@@ -5,6 +5,7 @@
 :root {
   --measure-capture: 680px;
   --measure-editor: 640px;
+  --capture-max: 200px;
   --column-min: 240px;
   --column-min-height: 160px;
   --mark-size: 26px;
@@ -30,8 +31,11 @@
 }
 .views { margin-left: auto; }
 #capture { position: relative; order: 3; flex-basis: 100%; }
-#capture .input { padding-right: var(--space-10); }
-#capture .kbd { position: absolute; right: var(--space-2-5); top: 50%; transform: translateY(-50%); }
+#capture .textarea {
+  display: block; height: var(--size-control-lg); min-height: var(--size-control-lg); max-height: var(--capture-max);
+  padding-right: var(--space-10); resize: none; overflow-y: auto;
+}
+#capture .kbd { position: absolute; right: var(--space-2-5); top: calc(var(--size-control-lg) / 2); transform: translateY(-50%); }
 
 #main { padding: var(--space-4); }
 
@@ -121,6 +125,11 @@
   margin-right: var(--space-1-5); font-size: var(--text-2xs); font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.04em; color: hsl(var(--muted-foreground));
 }
+.original { margin-top: var(--space-2); font-size: var(--text-xs); color: hsl(var(--muted-foreground)); }
+.original summary { cursor: pointer; width: fit-content; padding: var(--space-1) 0; }
+.original p { margin-top: var(--space-1); white-space: pre-wrap; overflow-wrap: anywhere; }
+.edit .original { margin-top: 0; }
+.edit .original .btn { margin-top: var(--space-2); }
 .task .map {
   margin-top: var(--space-2); padding: var(--space-1-5) var(--space-2); border-radius: var(--radius-sm);
   background: hsl(var(--muted)); font-family: var(--font-mono); font-size: var(--text-2xs);

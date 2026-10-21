@@ -210,6 +210,7 @@ def dispatch(
                 description=text_field(body, "description"),
                 next_step=text_field(body, "next"),
                 waiting=waiting,
+                clear_original=body.get("clear_original") is True,
                 before=text_field(body, "before"),
                 after=text_field(body, "after"),
                 top=body.get("top") is True,

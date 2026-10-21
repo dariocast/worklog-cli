@@ -18,6 +18,10 @@ This project follows Semantic Versioning. Notable changes are recorded here.
   open task that depends on someone else in a new Waiting column; `edit --drop`
   closes a task without doing it, shown in Done with a "Dropped" badge. A new
   agent turn on the task clears both. JSON tasks gain `waiting` and `dropped`.
+- Multi-line captures: the first line is the title and the whole text is kept
+  verbatim as the task's original note, folded on the card and printed by
+  `show`, until `edit --clear-original` or the board's Remove button. The board
+  capture field takes Shift+Enter for a new line; `worklog add -` reads stdin.
 
 ## [0.3.2] - 2026-10-15
 

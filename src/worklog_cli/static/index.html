@@ -13,9 +13,10 @@
 <header class="top">
   <h1 class="brand"><span class="brand-mark" aria-hidden="true">W</span>WorkLog</h1>
   <form id="capture" autocomplete="off">
-    <input id="capture-input" class="input input-lg" type="text" maxlength="500" autofocus
-           placeholder="Note something to do… “@project text” files it in a project"
-           aria-label="New task">
+    <textarea id="capture-input" class="textarea" rows="1" maxlength="4000" autofocus
+              placeholder="Note something to do… “@project text” files it in a project"
+              aria-label="New task" aria-describedby="capture-help"></textarea>
+    <span id="capture-help" class="sr-only">Enter adds it; Shift+Enter starts a new line, and the first line is the title.</span>
     <span class="kbd" aria-hidden="true">/</span>
   </form>
   <div class="tabs-list views" role="group" aria-label="View">

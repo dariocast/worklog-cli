@@ -23,6 +23,7 @@ const state = {
   allDone: false,
   editing: null,
   saved: null,        // task whose editor the current click closed by saving it
+  notes: new Set(),   // tasks whose original note is unfolded, kept across renders
   dragging: null,
   focusId: null,      // task whose control gets the focus after the next render
   focusAction: null,  // editor button that keeps the focus after the next render
@@ -242,11 +243,21 @@ function card(task) {
   meta,
   task.next ? el("div", { className: "next" }, el("span", { className: "next-label" }, "Next"), task.next) : null,
   task.description ? el("div", { className: "desc" }, task.description) : null,
+  task.original ? originalNote(task) : null,
   task.column === "inbox"
     ? task.directories.map((dir) => el("div", { className: "map" }, `worklog map ${quote(dir)} PROJECT`))
     : null);
   dropZone(node, { column: task.column, project: task.column === "todo" ? task.project : null, anchor: task });
   return node;
+}
+
+function originalNote(task, ...extra) {
+  // The capture as it was typed, folded away: clicking it never opens the editor.
+  return el("details", {
+    className: "original", open: state.notes.has(task.id),
+    onclick: (event) => event.stopPropagation(),
+    ontoggle: (event) => { if (event.target.open) state.notes.add(task.id); else state.notes.delete(task.id); },
+  }, el("summary", {}, "Original note"), el("p", {}, task.original), ...extra);
 }
 
 function editor(task) {
@@ -284,6 +295,10 @@ function editor(task) {
     change("PATCH", `/api/tasks/${task.id}`, { ...fields(), ...step(task, delta) });
   };
   const done = task.status === "done";
+  const clearOriginal = () => {
+    close();
+    change("PATCH", `/api/tasks/${task.id}`, { ...fields(), clear_original: true });
+  };
   const form = el("form", {
     className: "edit",
     onsubmit: (event) => { event.preventDefault(); save(); },
@@ -297,6 +312,10 @@ function editor(task) {
   field("Project", el("div", { className: "select-wrap" }, project)),
   field("Next step", next),
   field("Description", description),
+  task.original ? originalNote(task, el("button", {
+    type: "button", className: "btn btn-sm btn-ghost", title: "Once triaged, the note is no longer needed",
+    onclick: clearOriginal,
+  }, "Remove original note")) : null,
   el("div", { className: "edit-meta" }, el("span", { className: "id" }, task.id), task.duration_seconds > 0 ? ` · ${duration(task.duration_seconds)} recorded` : ""),
   el("div", { className: "actions" },
     el("button", { type: "submit", className: "btn btn-sm" }, "Save"),
@@ -494,16 +513,29 @@ function renderList() {
 
 // Capture and wiring
 
+const capture = document.getElementById("capture-input");
+function fit() {
+  // The capture field grows with its lines, up to the CSS max-height.
+  capture.style.height = "auto";
+  capture.style.height = capture.scrollHeight + capture.offsetHeight - capture.clientHeight + "px";
+}
+capture.addEventListener("input", fit);
+capture.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    document.getElementById("capture").requestSubmit();
+  }
+});
 document.getElementById("capture").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const input = document.getElementById("capture-input");
-  const text = input.value.trim();
+  const text = capture.value.trim();
   if (!text) return;
-  const match = /^@(\S+)\s+(.+)$/.exec(text);
+  const match = /^@(\S+)[ \t]+([\s\S]+)$/.exec(text);
   const body = match ? { project: match[1], title: match[2] } : { title: text };
-  input.value = "";  // clear at once: the next note may be typed before this one is saved
-  if (!(await change("POST", "/api/tasks", body)) && !input.value) input.value = text;
-  input.focus();
+  capture.value = "";  // clear at once: the next note may be typed before this one is saved
+  fit();
+  if (!(await change("POST", "/api/tasks", body)) && !capture.value) { capture.value = text; fit(); }
+  capture.focus();
 });
 
 for (const button of document.querySelectorAll(".views button")) {

@@ -305,7 +305,8 @@ to a closed task, use `worklog ignore --session` or bind the chat elsewhere.
   `assign --task ID`. The note does not list backlog items, so it does not
   change, and is not re-injected, whenever one is added.
 - Board: a capture field always focused at the top; Enter adds to the inbox,
-  a leading `@project ` adds to that project.
+  a leading `@project ` adds to that project. Shift+Enter starts a new line
+  (0.4, see Original note).
 
 ### CLI changes
 
@@ -438,6 +439,23 @@ dropped) clears waiting, and a closed task must be reopened before it can wait
 (`edit --open --waiting` does both). A new agent turn clears both flags in the
 same transaction as reopening, for the same reason: someone is working on it.
 Heartbeats and manual logs change neither.
+
+### Original note
+
+A capture often carries more than a title: context from a call, a link, who
+asked. A multi-line capture keeps its first line as the title and the whole
+text, verbatim, in `original` (append-and-review: the note is reviewed and
+triaged later, and its first wording is kept). A one-line capture has no
+original, since the title is the text. Only `add`, `task add` and the board
+capture field set it; chat tasks and `log --title` never do.
+
+The original is never rewritten. Once the task is triaged (a description, a
+plan, a tracker key), it can be removed with `edit --clear-original` or the
+board editor's Remove button. The board shows it folded on the card; `show`
+prints it. `worklog add -` reads the text from stdin, and the board capture field
+takes Shift+Enter for a new line. It is user text captured on purpose, not a
+prompt, so it does not conflict with never storing prompts; agents capture in
+their own words as before.
 
 Migration 3 → 4 adds the columns in one transaction, like 2 → 3; a schema 2
 ledger runs both steps.

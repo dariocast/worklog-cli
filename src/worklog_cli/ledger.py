@@ -35,7 +35,7 @@ CREATE TABLE tasks (
  auto_title INTEGER NOT NULL DEFAULT 0 CHECK(auto_title IN (0,1)), created_at TEXT NOT NULL,
  description TEXT, rank REAL NOT NULL DEFAULT 0, closed_at TEXT, next_step TEXT,
  waiting INTEGER NOT NULL DEFAULT 0 CHECK(waiting IN (0,1)),
- dropped INTEGER NOT NULL DEFAULT 0 CHECK(dropped IN (0,1))
+ dropped INTEGER NOT NULL DEFAULT 0 CHECK(dropped IN (0,1)), original TEXT
 );
 CREATE TABLE agent_sessions (
  agent TEXT NOT NULL, session_id TEXT NOT NULL, task_id TEXT REFERENCES tasks(id),
@@ -62,11 +62,13 @@ UPDATE tasks SET rank = (
  SELECT count(*) FROM tasks newer WHERE (newer.created_at, newer.id) > (tasks.created_at, tasks.id)
 );
 """
-# Schema 3 -> 4: next step, waiting on someone else, closed without doing it.
+# Schema 3 -> 4: next step, waiting on someone else, closed without doing it, and the
+# verbatim text of a multi-line capture.
 MIGRATE_4 = """
 ALTER TABLE tasks ADD COLUMN next_step TEXT;
 ALTER TABLE tasks ADD COLUMN waiting INTEGER NOT NULL DEFAULT 0 CHECK(waiting IN (0,1));
 ALTER TABLE tasks ADD COLUMN dropped INTEGER NOT NULL DEFAULT 0 CHECK(dropped IN (0,1));
+ALTER TABLE tasks ADD COLUMN original TEXT;
 """
 MIGRATIONS = {2: MIGRATE_3, 3: MIGRATE_4}  # from version -> statements
 MIN_GAP = 1e-6
@@ -77,6 +79,13 @@ def parse_session(key: str) -> tuple[str, str]:
     if agent not in AGENTS or not session_id:
         raise WorklogError(f"Invalid session {key!r}; expected AGENT:ID, for example claude:ab12")
     return agent, session_id
+
+
+def split_capture(text: str) -> tuple[str, str | None]:
+    """A capture's first line is its title; a longer capture is also kept verbatim."""
+    text = text.strip()
+    first, _, rest = text.partition("\n")
+    return first.strip(), text if rest.strip() else None
 
 
 def nonempty(value: str, label: str) -> str:
@@ -183,6 +192,7 @@ class Ledger:
         *,
         auto: bool,
         description: str | None = None,
+        original: str | None = None,
     ) -> str:
         project_id = self._project_id(project, create=project == INBOX)
         now = self.clock()
@@ -195,7 +205,7 @@ class Ledger:
         task_id = f"ACT-{day}-{int(row[0]):03d}"
         self.db.execute(
             "INSERT INTO tasks(id, project_id, title, ref, status, auto_title, created_at, "
-            "description, rank) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, "
+            "description, original, rank) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, "
             "(SELECT coalesce(min(rank), 1) - 1 FROM tasks))",
             (
                 task_id,
@@ -205,6 +215,7 @@ class Ledger:
                 int(auto),
                 iso(now),
                 (description or "").strip() or None,
+                original,
             ),
         )
         return task_id
@@ -216,12 +227,18 @@ class Ledger:
         ref: str | None = None,
         description: str | None = None,
     ) -> dict[str, Any]:
-        """Create a task without time. Without a project it is captured in the inbox."""
+        """Create a task without time. Without a project it is captured in the inbox.
+
+        The first line of ``title`` is the title; a multi-line text is also kept verbatim.
+        """
         project = project.strip() if project is not None else INBOX
         if project == IGNORE:
             raise WorklogError(f"{project!r} is reserved")
+        title, original = split_capture(title)
         with self.transaction():
-            task_id = self._new_task(project, title, ref, auto=False, description=description)
+            task_id = self._new_task(
+                project, title, ref, auto=False, description=description, original=original
+            )
         return self.show(task_id)
 
     def _require_task(self, task_id: str) -> sqlite3.Row:
@@ -279,6 +296,7 @@ class Ledger:
                 "next": r["next_step"],
                 "waiting": bool(r["waiting"]),
                 "dropped": bool(r["dropped"]),
+                "original": r["original"],
             }
             for r in rows
         ]
@@ -330,6 +348,7 @@ class Ledger:
         description: str | None = None,
         next_step: str | None = None,
         waiting: bool | None = None,
+        clear_original: bool = False,
         before: str | None = None,
         after: str | None = None,
         top: bool = False,
@@ -355,6 +374,9 @@ class Ledger:
                 )
             if waiting is not None:
                 self._set_waiting(task_id, waiting)
+            if clear_original:
+                # The original note is never rewritten, only removed once triaged.
+                self.db.execute("UPDATE tasks SET original = NULL WHERE id = ?", (task_id,))
             if top:
                 self.db.execute(
                     "UPDATE tasks SET rank = (SELECT min(rank) - 1 FROM tasks) WHERE id = ?",
