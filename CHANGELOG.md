@@ -4,6 +4,8 @@ This project follows Semantic Versioning. Notable changes are recorded here.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-21
+
 - `worklog assign --description` lets the agent describe its chat's task, and
   the note injected into chats now asks for a title and a short description in
   one command, also for chats in the inbox. Chats already open get the updated

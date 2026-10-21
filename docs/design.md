@@ -1,6 +1,7 @@
 # WorkLog CLI design
 
-Status: implemented in 0.3.0 (0.2 core plus the backlog and board section).
+Status: implemented in 0.4.0 (0.2 core, the backlog and board section of 0.3 and the
+planning aids of 0.4).
 Supersedes the 0.1 design.
 
 ## Purpose
@@ -399,7 +400,7 @@ temporary ledger. The page itself is checked manually in a browser.
 
 ## Planning aids (0.4)
 
-Status: in development for 0.4.0. Everything above stays valid; this section
+Status: implemented in 0.4.0. Everything above stays valid; this section
 adds to it. The goal is that the board alone answers "where are we and what
 comes next", so no hand-kept board file is needed next to the ledger.
 
