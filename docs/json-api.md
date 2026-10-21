@@ -41,6 +41,7 @@ are raw.
 | log, move INTERVAL | Interval |
 | rm | Interval plus `recreate`: the `worklog log` command that restores it |
 | add, task add, show, edit | Task (detail for show) |
+| brief | `{task_id, text}` |
 | list | Task[] |
 | assign, move --session | Session |
 | map | `{path, target, moved_sessions}` |

@@ -177,6 +177,7 @@ No interactive prompts except the `setup` confirmation.
 | `task rm ID [--force]` | Delete a task and its intervals; refuses recorded time without `--force`; its chats get a new task on their next turn |
 | `list [--open] [--project P]` | List tasks |
 | `show ID` | Task with intervals |
+| `brief ID` | Text to paste in a new chat to work on a task (0.4) |
 | `edit ID [--title T] [--ref R] [--next N] [--done \| --drop \| --open] [--waiting \| --no-waiting]` | Change a task |
 | `assign --session S [--task ID] [--title T] [--description D] [--next N] [--waiting \| --no-waiting] [--ref R] [--project P]` | Bind a chat to a task, or name, describe or move its task |
 | `map PATH PROJECT` / `map PATH ignore` | Map a directory; moves its inbox time |
@@ -456,6 +457,22 @@ prints it. `worklog add -` reads the text from stdin, and the board capture fiel
 takes Shift+Enter for a new line. It is user text captured on purpose, not a
 prompt, so it does not conflict with never storing prompts; agents capture in
 their own words as before.
+
+### Brief
+
+Planned work is best started in a fresh chat, with the task as its only input.
+`worklog brief ID` prints a ready-to-paste request: title, project, reference,
+time so far, state when not plainly open, description, next step, original
+note, and the one command that binds the new chat to the task
+(`worklog assign --session KEY --task ID`, the key coming from the WorkLog note
+of that chat). The time of the new chat then lands on the planned task, and the
+user does not have to remember its ID. JSON: `{task_id, text}`.
+
+The board editor has a Copy brief button. It saves pending edits first, so the
+brief matches the card, then writes the clipboard within the click (with a
+`ClipboardItem` whose text is still loading, as Safari requires). Where the
+browser refuses the clipboard, the brief opens in a dialog, selected, ready to
+copy by hand. Route: `GET /api/tasks/ID/brief`.
 
 Migration 3 → 4 adds the columns in one transaction, like 2 → 3; a schema 2
 ledger runs both steps.

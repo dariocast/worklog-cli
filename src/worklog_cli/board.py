@@ -192,6 +192,8 @@ def dispatch(
             project or None, title, text_field(body, "ref"), text_field(body, "description")
         )
     prefix = "/api/tasks/"
+    if path.startswith(prefix) and path.endswith("/brief") and method == "GET":
+        return ledger.brief(path[len(prefix) : -len("/brief")])
     if path.startswith(prefix) and len(path) > len(prefix):
         task_id = path[len(prefix) :]
         if method == "PATCH":

@@ -166,3 +166,12 @@ def test_waiting_column_and_dropped_status(server):
     assert dropped["data"]["dropped"] and dropped["data"]["status"] == "done"
     _, board = call(server, "GET", "/api/board")
     assert [t["column"] for t in board["data"]["tasks"]] == ["done"]
+
+
+def test_brief_route(server):
+    _, capture = call(server, "POST", "/api/tasks", {"title": "Read the proposal"})
+    task_id = capture["data"]["id"]
+    status, body = call(server, "GET", f"/api/tasks/{task_id}/brief")
+    assert status == 200 and body["data"]["text"].startswith(f"Work on WorkLog task {task_id}")
+    status, _ = call(server, "GET", "/api/tasks/ACT-20990101-001/brief")
+    assert status == 404

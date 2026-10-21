@@ -64,6 +64,7 @@ worklog add "Check the export format"     # note it for later, in the inbox
 worklog add "Fix crash" --project example-client --ref DEMO-123
 worklog add - < notes.txt                 # first line: title; the whole text is kept
 worklog list --open --unstarted          # planned work not started yet
+worklog brief ACT-20260930-002          # text to start a new chat on a planned task
 worklog edit ACT-20260930-001 --ref DEMO-123 --done
 worklog edit ACT-20260930-004 --project example-client --description "Asked in the call"
 worklog edit ACT-20260930-002 --next "Send the draft for review"

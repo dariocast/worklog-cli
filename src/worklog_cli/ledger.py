@@ -16,6 +16,7 @@ from typing import Any
 
 from worklog_cli import spool
 from worklog_cli.config import IGNORE, INBOX, RESERVED, Config, normalize_path
+from worklog_cli.context import brief as brief_text
 from worklog_cli.context import render
 from worklog_cli.errors import WorklogError
 from worklog_cli.timeline import Raw, spans, total_seconds
@@ -336,6 +337,10 @@ class Ledger:
             )
         ]
         return task
+
+    def brief(self, task_id: str) -> dict[str, Any]:
+        """The text that starts a new chat on a task, for example a planned one."""
+        return {"task_id": task_id, "text": brief_text(self.show(task_id))}
 
     def edit(
         self,

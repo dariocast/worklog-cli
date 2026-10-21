@@ -295,6 +295,22 @@ function editor(task) {
     change("PATCH", `/api/tasks/${task.id}`, { ...fields(), ...step(task, delta) });
   };
   const done = task.status === "done";
+  const copyBrief = () => {
+    // Saved edits first, so the brief says what the card says. The clipboard is written
+    // within the click, with the text still on its way, as Safari requires.
+    const dirty = JSON.stringify(fields()) !== initial;
+    if (dirty) state.focusAction = "brief";  // the reload re-renders the editor
+    const text = (dirty ? api("PATCH", `/api/tasks/${task.id}`, fields()) : Promise.resolve())
+      .then(() => api("GET", `/api/tasks/${task.id}/brief`))
+      .then((data) => data.text);
+    const copied = typeof ClipboardItem === "function"
+      ? navigator.clipboard.write([new ClipboardItem({ "text/plain": text.then((t) => new Blob([t], { type: "text/plain" })) })])
+      : text.then((t) => navigator.clipboard.writeText(t));
+    copied
+      .then(() => toast("Brief copied: paste it in a new chat to work on this task."))
+      .catch(() => text.then(showBrief, (error) => toast(error.message, { error: true })))
+      .finally(() => { if (dirty) load(); });
+  };
   const clearOriginal = () => {
     close();
     change("PATCH", `/api/tasks/${task.id}`, { ...fields(), clear_original: true });
@@ -321,6 +337,19 @@ function editor(task) {
     el("button", { type: "submit", className: "btn btn-sm" }, "Save"),
     el("button", { type: "button", className: "btn btn-sm btn-ghost", onclick: cancel }, "Cancel"),
     el("button", {
+      type: "button", className: "btn btn-sm btn-ghost push", "data-action": "brief",
+      title: "Text to start a new chat on this task", onclick: copyBrief,
+    }, "Copy brief"),
+    task.started ? null : el("button", {
+      type: "button", className: "btn btn-sm btn-ghost-destructive",
+      onclick: () => {
+        if (!confirm(`Delete “${task.title}”?`)) return;
+        state.editing = null;
+        change("DELETE", `/api/tasks/${task.id}`).then(() => document.getElementById("capture-input").focus());
+      },
+    }, "Delete")),
+  el("div", { className: "actions" },
+    el("button", {
       type: "button", className: "btn btn-sm btn-outline",
       onclick: () => { close(); change("PATCH", `/api/tasks/${task.id}`, { ...fields(), status: done ? "open" : "done" }); },
     }, done ? "Reopen" : "Mark done"),
@@ -342,21 +371,29 @@ function editor(task) {
         type: "button", className: "btn btn-sm btn-outline", "data-action": "down",
         disabled: !step(task, 1), onclick: () => shift(1, "down"),
       }, "Move down"),
-    ] : null,
-    task.started ? null : el("button", {
-      type: "button", className: "btn btn-sm btn-ghost-destructive push",
-      onclick: () => {
-        if (!confirm(`Delete “${task.title}”?`)) return;
-        state.editing = null;
-        change("DELETE", `/api/tasks/${task.id}`).then(() => document.getElementById("capture-input").focus());
-      },
-    }, "Delete")));
+    ] : null));
   form.autosave = autosave;
   return form;
 }
 
+function showBrief(text) {
+  // Without clipboard access the brief is shown selected, ready for Cmd+C or Ctrl+C.
+  const area = el("textarea", { className: "textarea", readonly: true, rows: "12", "aria-label": "Brief" });
+  area.value = text;
+  const dialog = el("dialog", { className: "dialog", "aria-labelledby": "brief-title", onclose: () => dialog.remove() },
+    el("h2", { id: "brief-title" }, "Copy the brief"),
+    el("p", {}, "The browser did not allow copying. Copy this text and paste it in a new chat."),
+    area,
+    el("div", { className: "actions" },
+      el("button", { type: "button", className: "btn btn-sm", onclick: () => dialog.close() }, "Close")));
+  document.body.append(dialog);
+  dialog.showModal();
+  area.select();
+}
+
 // An open editor saves its changes when the pointer or the keyboard focus goes elsewhere.
 function leaveEditor(event) {
+  if (event.target.closest?.("dialog")) return;  // a dialog opened from the editor
   if (event.type === "pointerdown") state.saved = null;
   const form = document.querySelector("#main .edit");
   if (form && !form.contains(event.target)) form.autosave();

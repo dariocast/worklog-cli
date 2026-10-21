@@ -1,4 +1,5 @@
-"""Instructions injected into a tracked chat. Short on purpose: it costs tokens."""
+"""Text for agent chats: the note injected into a tracked chat (short on purpose: it costs
+tokens), and the brief that starts a new chat on a planned task."""
 
 from typing import Any
 
@@ -29,6 +30,35 @@ def render(info: dict[str, Any]) -> str:
         " the task now depends on someone outside this chat.",
         "Put the task ID in any handoff. If the user says not to track this chat, run "
         f"`worklog ignore --session {session}`. Do not otherwise mention WorkLog.",
+    ]
+    return "\n".join(lines)
+
+
+def brief(task: dict[str, Any]) -> str:
+    """A ready-to-paste request to work on a task in a new chat."""
+    lines = [f"Work on WorkLog task {task['id']}: {task['title']}"]
+    facts = [f"project {task['project']}"]
+    if task["ref"]:
+        facts.append(f"ref {task['ref']}")
+    if task["duration_seconds"] > 0:
+        minutes = round(task["duration_seconds"] / 60)
+        facts.append(f"{minutes // 60}h{minutes % 60:02d} recorded so far")
+    if task["status"] == "done":
+        facts.append("closed (dropped)" if task["dropped"] else "closed")
+    elif task["waiting"]:
+        facts.append("was waiting on someone else")
+    lines.append("(" + ", ".join(facts) + ")")
+    if task["description"]:
+        lines += ["", "What and why:", task["description"]]
+    if task["next"]:
+        lines += ["", f"Next step: {task['next']}"]
+    if task["original"]:
+        lines += ["", "Original note:", task["original"]]
+    lines += [
+        "",
+        "Before starting, bind this chat to the task with the session key from the WorkLog"
+        f" note: `worklog assign --session KEY --task {task['id']}`. Keep its next step"
+        " current as you go.",
     ]
     return "\n".join(lines)
 

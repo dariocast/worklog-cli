@@ -22,6 +22,10 @@ This project follows Semantic Versioning. Notable changes are recorded here.
   verbatim as the task's original note, folded on the card and printed by
   `show`, until `edit --clear-original` or the board's Remove button. The board
   capture field takes Shift+Enter for a new line; `worklog add -` reads stdin.
+- `worklog brief ID` prints a ready-to-paste request to work on a task in a new
+  chat, ending with the command that binds that chat to the task. The board
+  editor has a Copy brief button (with a dialog fallback when the browser
+  refuses the clipboard); its actions are now on two rows.
 
 ## [0.3.2] - 2026-10-15
 

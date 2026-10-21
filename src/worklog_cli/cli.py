@@ -31,7 +31,7 @@ VALUE_OPTIONS = {
     "--timezone", "--round", "--format", "--session", "--description", "--before", "--after",
     "--port", "--next",
 }  # fmt: skip
-READ_ONLY = {"list", "show", "projects", "inbox", "intervals", "report"}
+READ_ONLY = {"list", "show", "brief", "projects", "inbox", "intervals", "report"}
 
 
 class Parser(argparse.ArgumentParser):
@@ -82,6 +82,9 @@ def parser() -> Parser:
     begun.add_argument("--unstarted", action="store_true", help="Only tasks without time")
     begun.add_argument("--started", action="store_true", help="Only tasks with time")
     commands.add_parser("show", help="Show a task and its intervals").add_argument("task_id")
+    commands.add_parser("brief", help="Text to paste in a new chat to work on a task").add_argument(
+        "task_id"
+    )
     edit = commands.add_parser("edit", help="Change a task")
     edit.add_argument("task_id")
     edit.add_argument("--title")
@@ -338,6 +341,8 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
         return ledger.tasks(open_only=args.open, project=args.project, started=begun)
     if command == "show":
         return ledger.show(args.task_id)
+    if command == "brief":
+        return ledger.brief(args.task_id)
     if command == "edit":
         status = "done" if args.done else "dropped" if args.drop else "open" if args.open else None
         return ledger.edit(
@@ -442,6 +447,8 @@ def task_line(t: dict[str, Any]) -> str:
 
 def human(args: argparse.Namespace, data: Any) -> str:
     command = args.command
+    if command == "brief":
+        return str(data["text"])
     if command == "log":
         return f"Logged {human_duration(data['duration_seconds'])} on {data['task_id']}"
     if command == "task" and args.action == "rm":

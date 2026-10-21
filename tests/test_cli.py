@@ -228,3 +228,6 @@ def test_capture_from_stdin_keeps_the_original_note(isolated):
     assert task["title"] == "Review the export" and task["original"] == note.strip()
     assert "original note:" in run("show", task["id"]).stdout
     assert data(run("edit", task["id"], "--clear-original", "--json"))["original"] is None
+    brief = run("brief", task["id"]).stdout
+    assert brief.startswith(f"Work on WorkLog task {task['id']}: Review the export")
+    assert data(run("brief", task["id"], "--json"))["task_id"] == task["id"]

@@ -447,3 +447,26 @@ def test_multi_line_capture_keeps_its_original_note(ledger):
     assert ledger.edit(capture["id"], clear_original=True)["original"] is None
     with pytest.raises(WorklogError, match="Title"):
         ledger.add_task(None, "\n  \n")
+
+
+def test_brief_starts_a_new_chat_on_a_planned_task(ledger):
+    ledger.add_project("example-project")
+    task = ledger.add_task(None, "Prepare the demo\nUse the fictional dataset.")
+    ledger.edit(
+        task["id"],
+        project="example-project",
+        ref="DEMO-7",
+        description="A short demo for the review.",
+        next_step="Pick the screens",
+    )
+    text = ledger.brief(task["id"])["text"]
+    assert text.startswith(f"Work on WorkLog task {task['id']}: Prepare the demo")
+    assert "(project example-project, ref DEMO-7)" in text
+    assert "What and why:\nA short demo for the review." in text
+    assert "Next step: Pick the screens" in text
+    assert "Original note:\nPrepare the demo\nUse the fictional dataset." in text
+    assert f"worklog assign --session KEY --task {task['id']}" in text
+    ledger.edit(task["id"], waiting=True)
+    assert "was waiting on someone else" in ledger.brief(task["id"])["text"]
+    with pytest.raises(WorklogError, match="Unknown task"):
+        ledger.brief("ACT-20990101-001")
