@@ -121,7 +121,8 @@ function render() {
   // Rendering replaces every node, so the focus is put back where it was.
   const kept = main.contains(document.activeElement)
     ? document.activeElement.closest("[data-id]")?.dataset.id : null;
-  main.replaceChildren(state.view === "list" ? renderList() : renderBoard());
+  const views = { list: renderList, timeline: renderTimeline };
+  main.replaceChildren((views[state.view] || renderBoard)());
   const form = main.querySelector(".edit");
   if (form) {
     const action = state.focusAction && form.querySelector(`[data-action="${state.focusAction}"]:not(:disabled)`);
@@ -546,6 +547,60 @@ function renderList() {
       el("span", {}, `Open tasks and tasks done in the last ${state.data.done_days} days.`),
       doneToggle()),
     el("div", { className: "table-wrap" }, el("table", { className: "table" }, el("thead", {}, head), body)));
+}
+
+// Timeline view: closed tasks by the local day they were closed, newest first.
+
+function localDay(iso) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function dayLabel(key) {
+  const day = new Date(key + "T12:00:00");
+  const options = { weekday: "long", day: "numeric", month: "long" };
+  if (day.getFullYear() !== new Date().getFullYear()) options.year = "numeric";
+  return day.toLocaleDateString(undefined, options);
+}
+
+function renderTimeline() {
+  const days = new Map();
+  for (const task of tasksIn("done")) {
+    const key = task.closed_at ? localDay(task.closed_at) : "";
+    if (!days.has(key)) days.set(key, []);
+    days.get(key).push(task);
+  }
+  const timeline = el("ol", { className: "timeline" });
+  for (const [key, tasks] of days) {
+    const total = tasks.reduce((sum, t) => sum + t.duration_seconds, 0);
+    const dropped = tasks.filter((t) => t.dropped).length;
+    const facts = [`${tasks.length} closed`, dropped ? `${dropped} dropped` : null, total > 0 ? `${duration(total)} recorded` : null];
+    timeline.append(el("li", { className: "day" },
+      el("h2", {}, key ? dayLabel(key) : "Closed before 0.3"),
+      el("p", { className: "day-facts" }, facts.filter(Boolean).join(" · ")),
+      el("ul", {}, tasks.map(entry))));
+  }
+  return el("div", {},
+    el("div", { className: "toolbar" },
+      el("span", {}, state.allDone ? "All closed tasks." : `Tasks closed in the last ${state.data.done_days} days.`),
+      doneToggle()),
+    days.size ? timeline : el("p", { className: "hint" }, "Nothing closed yet in this period."));
+}
+
+function entry(task) {
+  if (state.editing === task.id) {
+    return el("li", { className: "card task editing", "data-id": task.id }, editor(task));
+  }
+  return el("li", { className: "entry", "data-id": task.id },
+    el("button", {
+      type: "button", className: task.dropped ? "open done-title" : "open",
+      onclick: () => { state.editing = task.id; render(); },
+    }, task.title),
+    el("div", { className: "meta" },
+      el("span", { className: "badge badge-outline" }, task.project),
+      task.ref ? el("span", { className: "badge badge-secondary" }, task.ref) : null,
+      task.dropped ? el("span", { className: "badge badge-muted" }, "Dropped") : null,
+      task.duration_seconds > 0 ? el("span", { className: "time" }, duration(task.duration_seconds)) : null));
 }
 
 // Capture and wiring

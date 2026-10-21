@@ -29,6 +29,8 @@ This project follows Semantic Versioning. Notable changes are recorded here.
 - `worklog status [--project P]` sums up the board: counts per column and the
   tasks in progress, waiting and to do with their next steps, so any chat can
   answer "where are we". The chat note mentions it.
+- Board Timeline view: closed tasks by the day they were closed, with counts
+  and recorded time per day, for stand-ups and summaries.
 
 ## [0.3.2] - 2026-10-15
 

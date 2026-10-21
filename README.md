@@ -89,7 +89,8 @@ Total 3h30
 ```
 
 `worklog board` opens a page on `127.0.0.1` with five columns (Inbox, To do,
-In progress, Waiting, Done) and a List view with time per project. Type in the field at
+In progress, Waiting, Done), a List view with time per project and a Timeline
+of what was closed day by day. Type in the field at
 the top to note something (`@project text` files it directly), drag cards to
 triage, reorder or close them, and click a card to edit it. A task is "in
 progress" only once it has recorded time, from a chat bound to it or from

@@ -486,6 +486,17 @@ progress, waiting, done}, columns: {COLUMN: Task[]}}`, with the board's
 columns, order and done window (it reuses `board_data`). The injected note
 mentions it in one clause. It is read-only.
 
+### Timeline
+
+A third board view, next to Board and List: closed tasks grouped by the local
+day they were closed, newest first, each day with how many were closed or
+dropped and their recorded time. It replaces a hand-kept log of deliveries for
+stand-ups and summaries. It is derived from `closed_at`, so it needs no new
+state; tasks closed before 0.3 have no closing time and appear last under
+their own heading when all closed tasks are shown. Like the Done column it
+covers the last 14 days unless Show all is chosen. Clicking an entry opens the
+same inline editor.
+
 Migration 3 → 4 adds the columns in one transaction, like 2 → 3; a schema 2
 ledger runs both steps.
 

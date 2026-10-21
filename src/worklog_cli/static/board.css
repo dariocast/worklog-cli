@@ -35,6 +35,8 @@
   display: block; height: var(--size-control-lg); min-height: var(--size-control-lg); max-height: var(--capture-max);
   padding-right: var(--space-10); resize: none; overflow-y: auto;
 }
+#capture .textarea:placeholder-shown { overflow: hidden; }
+#capture .textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #capture .kbd { position: absolute; right: var(--space-2-5); top: calc(var(--size-control-lg) / 2); transform: translateY(-50%); }
 
 #main { padding: var(--space-4); }
@@ -193,3 +195,21 @@ body[aria-busy="true"] { cursor: progress; }
 .table tr.editor > td { background: hsl(var(--muted) / 0.35); padding: var(--space-4); }
 .table tr.editor .edit { max-width: var(--measure-editor); }
 .done-title { color: hsl(var(--muted-foreground)); text-decoration: line-through; }
+
+/* Timeline view */
+.timeline { max-width: var(--measure-editor); margin: 0; padding: 0 0 0 var(--space-4); list-style: none; border-left: 2px solid hsl(var(--border)); }
+.timeline .day { position: relative; padding-left: var(--space-3); margin-bottom: var(--space-6); }
+.timeline .day::before {
+  content: ""; position: absolute; left: calc(-1 * var(--space-4) - var(--size-dot) / 2 - 1px); top: var(--space-1-5);
+  width: var(--size-dot); height: var(--size-dot); border-radius: var(--radius-full); background: hsl(var(--muted-foreground));
+}
+.timeline h2 { font-size: var(--text-base); font-weight: 600; }
+.timeline .day-facts { font-size: var(--text-xs); color: hsl(var(--muted-foreground)); margin-bottom: var(--space-2); }
+.timeline ul { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-2); }
+.timeline .entry { padding: var(--space-2) var(--space-3); border: 1px solid hsl(var(--border)); border-radius: var(--radius); }
+.timeline .entry .open { font-weight: 500; overflow-wrap: anywhere; }
+.timeline .entry .open:hover { text-decoration: underline; text-underline-offset: var(--space-1); }
+.timeline .entry .open:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-xs); }
+.timeline .meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1-5); margin-top: var(--space-1-5); font-size: var(--text-xs); }
+.timeline .time { font-variant-numeric: tabular-nums; font-weight: 500; }
+.timeline .editing { list-style: none; margin: 0; }
