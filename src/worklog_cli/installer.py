@@ -15,7 +15,7 @@ from worklog_cli.errors import WorklogError
 from worklog_cli.timeutil import utcnow
 
 EVENTS = {"UserPromptSubmit": "prompt", "PostToolUse": "activity", "Stop": "activity"}
-MARKER = re.compile(r"\bhook (prompt|activity) --agent (claude|codex)\b")
+MARKER = re.compile(r"\bhook (prompt|activity) --agent (claude|codex|agy)\b")
 
 
 @dataclass(frozen=True)
@@ -28,9 +28,11 @@ class Target:
 def targets() -> list[Target]:
     claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
     codex = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    gemini = Path(os.environ.get("GEMINI_CONFIG_DIR") or Path.home() / ".gemini" / "config")
     return [
         Target("claude", claude, claude / "settings.json"),
         Target("codex", codex, codex / "hooks.json"),
+        Target("agy", gemini, gemini / "hooks.json"),
     ]
 
 
@@ -60,8 +62,11 @@ def read(path: Path) -> tuple[str, dict[str, Any]]:
     return text, data
 
 
-def without_worklog(data: dict[str, Any]) -> dict[str, Any]:
+def without_worklog(data: dict[str, Any], agent: str = "") -> dict[str, Any]:
     result: dict[str, Any] = json.loads(json.dumps(data))
+    if agent == "agy":
+        result.pop("worklog", None)
+        return result
     hooks = result.get("hooks", {})
     for event in list(hooks):
         groups = []
@@ -82,7 +87,37 @@ def without_worklog(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def with_worklog(data: dict[str, Any], agent: str, command: str) -> dict[str, Any]:
-    result = without_worklog(data)
+    result = without_worklog(data, agent)
+    if agent == "agy":
+        result["worklog"] = {
+            "PreInvocation": [
+                {
+                    "type": "command",
+                    "command": f"{command} hook prompt --agent agy",
+                    "timeout": 10,
+                }
+            ],
+            "PostToolUse": [
+                {
+                    "matcher": "*",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f"{command} hook activity --agent agy",
+                            "timeout": 10,
+                        }
+                    ],
+                }
+            ],
+            "Stop": [
+                {
+                    "type": "command",
+                    "command": f"{command} hook activity --agent agy",
+                    "timeout": 10,
+                }
+            ],
+        }
+        return result
     hooks = result.setdefault("hooks", {})
     for event, kind in EVENTS.items():
         entry = {"type": "command", "command": f"{command} hook {kind} --agent {agent}"}
@@ -101,7 +136,10 @@ def plan(uninstall: bool) -> list[dict[str, Any]]:
         if not target.home.is_dir():
             continue
         old_text, data = read(target.file)
-        new = without_worklog(data) if uninstall else with_worklog(data, target.agent, command)
+        if uninstall:
+            new = without_worklog(data, target.agent)
+        else:
+            new = with_worklog(data, target.agent, command)
         new_text = render(new)
         if not old_text and not new_text:
             continue
@@ -145,6 +183,22 @@ def installed(agent: str) -> tuple[bool, str | None]:
         if target.agent != agent:
             continue
         _, data = read(target.file)
+        if agent == "agy":
+            worklog_hook = data.get("worklog", {})
+            if not isinstance(worklog_hook, dict):
+                return False, None
+            found_agy: dict[str, str] = {}
+            for ev in ("PreInvocation", "PostToolUse", "Stop"):
+                handlers = worklog_hook.get(ev, [])
+                for h in handlers if isinstance(handlers, list) else []:
+                    cmd = h.get("command", "") if isinstance(h, dict) else ""
+                    if not cmd and isinstance(h.get("hooks"), list):
+                        cmd = h["hooks"][0].get("command", "") if h["hooks"] else ""
+                    if MARKER.search(cmd):
+                        found_agy[ev] = cmd
+            complete = set(("PreInvocation", "PostToolUse", "Stop")) <= set(found_agy)
+            first = next(iter(found_agy.values()), None)
+            return complete, first.split(" hook ")[0] if first else None
         found: dict[str, str] = {}
         for event, groups in data.get("hooks", {}).items():
             for group in groups if isinstance(groups, list) else []:

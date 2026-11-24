@@ -29,9 +29,19 @@ from worklog_cli.timeutil import (
 VALUE_OPTIONS = {
     "--db", "--title", "--project", "--task", "--ref", "--note", "--day", "--from", "--to",
     "--timezone", "--round", "--format", "--session", "--description", "--before", "--after",
-    "--port", "--next",
+    "--port", "--next", "--cwd",
 }  # fmt: skip
-READ_ONLY = {"list", "show", "brief", "status", "projects", "inbox", "intervals", "report"}
+READ_ONLY = {
+    "list",
+    "show",
+    "brief",
+    "status",
+    "projects",
+    "inbox",
+    "intervals",
+    "report",
+    "current",
+}
 
 
 class Parser(argparse.ArgumentParser):
@@ -122,6 +132,9 @@ def parser() -> Parser:
     mapping.add_argument("path")
     mapping.add_argument("target", metavar="PROJECT|ignore")
     commands.add_parser("inbox", help="Time from unmapped directories")
+    cur = commands.add_parser("current", help="Show current task for a directory or session")
+    cur.add_argument("--cwd", help="Directory to inspect (default: current working directory)")
+    cur.add_argument("--session", help="AGENT:ID session to inspect")
     ignore = commands.add_parser("ignore", help="Stop tracking a chat and discard its time")
     ignore.add_argument("--session", required=True)
 
@@ -387,6 +400,8 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
         return {"path": key, "target": target, **result}
     if command == "inbox":
         return ledger.inbox()
+    if command == "current":
+        return ledger.current(directory=args.cwd, session=args.session)
     if command == "ignore":
         return ledger.ignore(args.session)
     if command == "intervals":
@@ -518,6 +533,19 @@ def human(args: argparse.Namespace, data: Any) -> str:
             )
             or "Inbox is empty."
         )
+    if command == "current":
+        st = data.get("status")
+        if st == "ignored":
+            return f"Ignored ({data.get('cwd', '')})"
+        if st in ("tracked", "project"):
+            ref = f" [{data['ref']}]" if data.get("ref") else ""
+            dur_today = human_duration(data.get("duration_today_seconds", 0))
+            dur_tot = human_duration(data.get("duration_total_seconds", 0))
+            return (
+                f"{data['task_id']} ({data['project']}){ref}: {data['title']} "
+                f"(today: {dur_today}, total: {dur_tot})"
+            )
+        return f"{st.capitalize()} ({data.get('cwd', '')})"
     if command == "ignore":
         return f"Ignoring {data['session']}; removed {data['removed_intervals']} intervals"
     if command == "intervals":

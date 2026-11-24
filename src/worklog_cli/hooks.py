@@ -22,11 +22,13 @@ def event_from(kind: str, agent: str, stream: TextIO) -> dict[str, Any]:
     if not isinstance(payload, dict):
         payload = {}
     # Only identifiers and the directory are kept; prompt text is never read.
+    session_id = str(payload.get("session_id") or payload.get("conversationId") or "")
+    cwd = str(payload.get("cwd") or "")
     return {
         "event": kind,
         "agent": agent,
-        "session_id": str(payload.get("session_id") or ""),
-        "cwd": str(payload.get("cwd") or ""),
+        "session_id": session_id,
+        "cwd": cwd,
         "ts": iso(utcnow()),
     }
 
@@ -41,6 +43,8 @@ def run(kind: str, agent: str, db: Path, stdin: TextIO, stdout: TextIO) -> int:
             raise ValueError("hook payload without session_id")
         if kind == "activity":
             spool.append(event)
+            if agent == "agy":
+                stdout.write("{}\n")
             return 0
         ledger = Ledger(db, config.load())
         try:
@@ -49,7 +53,13 @@ def run(kind: str, agent: str, db: Path, stdin: TextIO, stdout: TextIO) -> int:
         finally:
             ledger.close()
         if text:
-            stdout.write(text + "\n")
+            if agent == "agy":
+                msg = {"injectSteps": [{"systemMessage": {"systemMessage": text}}]}
+                stdout.write(json.dumps(msg) + "\n")
+            else:
+                stdout.write(text + "\n")
+        elif agent == "agy":
+            stdout.write("{}\n")
     except Exception as exc:
         spool.log_error(f"hook {kind} {agent}: {exc}")
         if event is not None and event["session_id"]:

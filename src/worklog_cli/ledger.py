@@ -19,11 +19,11 @@ from worklog_cli.config import IGNORE, INBOX, RESERVED, Config, normalize_path
 from worklog_cli.context import brief as brief_text
 from worklog_cli.context import render
 from worklog_cli.errors import WorklogError
-from worklog_cli.timeline import Raw, spans, total_seconds
+from worklog_cli.timeline import Raw, per_day, spans, total_seconds
 from worklog_cli.timeutil import iso, parse_iso, to_local, utcnow
 
-SCHEMA_VERSION = 4
-AGENTS = ("claude", "codex")
+SCHEMA_VERSION = 5
+AGENTS = ("claude", "codex", "agy")
 SOURCES = (*AGENTS, "manual")
 STATUSES = ("open", "done", "dropped")  # dropped: closed without doing it
 SCHEMA = """
@@ -47,7 +47,7 @@ CREATE TABLE agent_sessions (
 CREATE TABLE intervals (
  id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id),
  started_at TEXT NOT NULL, ended_at TEXT NOT NULL,
- source TEXT NOT NULL CHECK(source IN ('claude','codex','manual')),
+ source TEXT NOT NULL CHECK(source IN ('claude','codex','agy','manual')),
  session_id TEXT, note TEXT, CHECK(ended_at >= started_at),
  CHECK((source = 'manual') = (session_id IS NULL))
 );
@@ -71,7 +71,24 @@ ALTER TABLE tasks ADD COLUMN waiting INTEGER NOT NULL DEFAULT 0 CHECK(waiting IN
 ALTER TABLE tasks ADD COLUMN dropped INTEGER NOT NULL DEFAULT 0 CHECK(dropped IN (0,1));
 ALTER TABLE tasks ADD COLUMN original TEXT;
 """
-MIGRATIONS = {2: MIGRATE_3, 3: MIGRATE_4}  # from version -> statements
+# Schema 4 -> 5: add 'agy' (Antigravity CLI) to the source check constraint.
+MIGRATE_5 = """
+PRAGMA foreign_keys=off;
+CREATE TABLE intervals_new (
+ id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id),
+ started_at TEXT NOT NULL, ended_at TEXT NOT NULL,
+ source TEXT NOT NULL CHECK(source IN ('claude','codex','agy','manual')),
+ session_id TEXT, note TEXT, CHECK(ended_at >= started_at),
+ CHECK((source = 'manual') = (session_id IS NULL))
+);
+INSERT INTO intervals_new SELECT * FROM intervals;
+DROP TABLE intervals;
+ALTER TABLE intervals_new RENAME TO intervals;
+CREATE INDEX intervals_task ON intervals(task_id);
+CREATE INDEX intervals_session ON intervals(source, session_id, started_at);
+PRAGMA foreign_keys=on;
+"""
+MIGRATIONS = {2: MIGRATE_3, 3: MIGRATE_4, 4: MIGRATE_5}  # from version -> statements
 MIN_GAP = 1e-6
 
 
@@ -825,6 +842,104 @@ class Ledger:
             }
             for r in rows
         ]
+
+    def current(
+        self, directory: str | Path | None = None, session: str | None = None
+    ) -> dict[str, Any]:
+        """Return the current task and tracking state for a directory or session."""
+        today = to_local(self.clock(), None).date()
+        today_raws = self.raws()
+        daily_totals = per_day(spans(today_raws, self.idle), None)
+
+        def task_info(task_id: str, status_label: str, extra: dict[str, Any]) -> dict[str, Any]:
+            task = self.show(task_id)
+            duration_today = round(daily_totals.get((today, task_id), 0.0), 6)
+            return {
+                "status": status_label,
+                "task_id": task_id,
+                "ref": task["ref"],
+                "title": task["title"],
+                "project": task["project"],
+                "task_status": task["status"],
+                "duration_today_seconds": duration_today,
+                "duration_total_seconds": task["duration_seconds"],
+                **extra,
+            }
+
+        # 1. If explicit session is given
+        if session:
+            agent, session_id = parse_session(session)
+            info = self.session_info(agent, session_id)
+            if info["ignored"]:
+                return {"status": "ignored", "session": session, "cwd": info["cwd"]}
+            if info["task_id"]:
+                return task_info(
+                    info["task_id"], "tracked", {"session": session, "cwd": info["cwd"]}
+                )
+
+        # 2. Match directory against agent_sessions and config
+        base = normalize_path(directory or Path.cwd())
+
+        # Check agent_sessions ordered by latest activity in intervals, then created_at.
+        rows = self.db.execute(
+            "SELECT s.agent, s.session_id, s.cwd, s.task_id, s.ignored, s.created_at, "
+            "coalesce("
+            "  (SELECT max(i.ended_at) FROM intervals i WHERE i.session_id = s.session_id), "
+            "  s.created_at"
+            ") AS last_active "
+            "FROM agent_sessions s "
+            "ORDER BY last_active DESC"
+        ).fetchall()
+
+        # Phase A: Exact match first (c == base)
+        for r in rows:
+            if not r["cwd"]:
+                continue
+            c = normalize_path(r["cwd"])
+            if c == base:
+                if r["ignored"]:
+                    return {"status": "ignored", "cwd": str(base)}
+                if r["task_id"]:
+                    return task_info(
+                        r["task_id"],
+                        "tracked",
+                        {"session": f"{r['agent']}:{r['session_id']}", "cwd": str(base)},
+                    )
+
+        # Phase B: Base is inside a project directory (c in base.parents)
+        for r in rows:
+            if not r["cwd"]:
+                continue
+            c = normalize_path(r["cwd"])
+            if c in base.parents:
+                if r["ignored"]:
+                    return {"status": "ignored", "cwd": str(base)}
+                if r["task_id"]:
+                    return task_info(
+                        r["task_id"],
+                        "tracked",
+                        {"session": f"{r['agent']}:{r['session_id']}", "cwd": str(base)},
+                    )
+
+        # 3. Check config mapping for directory
+        target = self.config.resolve(str(base))
+        if target == IGNORE:
+            return {"status": "ignored", "cwd": str(base)}
+        project = target or INBOX
+        open_task = self.db.execute(
+            "SELECT t.id FROM tasks t JOIN projects p ON p.id = t.project_id "
+            "WHERE p.name = ? AND t.status = 'open' "
+            "ORDER BY t.rank ASC, t.created_at DESC LIMIT 1",
+            (project,),
+        ).fetchone()
+        if open_task:
+            return task_info(open_task[0], "project", {"cwd": str(base)})
+
+        return {
+            "status": "untracked" if target else "unmapped",
+            "project": project,
+            "cwd": str(base),
+        }
 
     def drain(self) -> None:
         def replay(event: dict[str, Any]) -> None:
