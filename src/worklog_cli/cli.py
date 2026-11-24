@@ -163,6 +163,9 @@ def parser() -> Parser:
         dest="action", required=True, parser_class=Parser
     )
     project.add_parser("add", help="Register a project").add_argument("name")
+    rename = project.add_parser("rename", help="Rename a project and its path mappings")
+    rename.add_argument("old")
+    rename.add_argument("new")
 
     setup = commands.add_parser("setup", help="Install hooks for Claude Code and Codex")
     setup.add_argument("--yes", action="store_true", help="Apply without asking")
@@ -454,6 +457,14 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
         return report(ledger, first, last, tz, step)
     if command == "projects":
         return ledger.projects()
+    if command == "project" and args.action == "rename":
+        result = ledger.rename_project(args.old, args.new)
+        settings = config.load()
+        mapped = sorted(k for k, v in settings.paths.items() if v == result["old"])
+        if mapped:
+            settings.paths.update({k: result["name"] for k in mapped})
+            config.save(settings)
+        return {**result, "paths": mapped}
     if command == "project":
         return ledger.add_project(args.name)
     raise WorklogError(f"Unknown command {command}", "usage_error")
@@ -603,6 +614,9 @@ def human(args: argparse.Namespace, data: Any) -> str:
             "\n".join(f"{p['name']}  {p['open']} open / {p['tasks']} tasks" for p in data)
             or "No projects."
         )
+    if command == "project" and "old" in data:
+        moved = "".join(f"\n  {path} -> {data['name']}" for path in data["paths"])
+        return f"Renamed project {data['old']} to {data['name']}{moved}"
     if command == "project":
         return f"Added project {data['name']}"
     if command == "doctor":

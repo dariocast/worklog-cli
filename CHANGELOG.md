@@ -4,6 +4,9 @@ This project follows Semantic Versioning. Notable changes are recorded here.
 
 ## [Unreleased]
 
+- `worklog project rename OLD NEW` renames a project; its tasks, time and
+  the path mappings in the config follow it.
+
 ## [0.5.0] - 2026-11-24
 
 - Chats of a task: `show` and the board editor list the chats that work or

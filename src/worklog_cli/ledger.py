@@ -209,6 +209,21 @@ class Ledger:
             self._project_id(name, create=True)
         return {"name": name}
 
+    def rename_project(self, old: str, new: str) -> dict[str, Any]:
+        """Rename a project in place: its tasks, time and reports follow it."""
+        old, new = old.strip(), nonempty(new, "Project name")
+        if old in RESERVED or new in RESERVED:
+            raise WorklogError(f"{(old if old in RESERVED else new)!r} is reserved")
+        with self.transaction():
+            project_id = self._project_id(old)
+            if (
+                old != new
+                and self.db.execute("SELECT 1 FROM projects WHERE name = ?", (new,)).fetchone()
+            ):
+                raise WorklogError(f"Project {new!r} already exists", "conflict")
+            self.db.execute("UPDATE projects SET name = ? WHERE id = ?", (new, project_id))
+        return {"old": old, "name": new}
+
     def projects(self) -> list[dict[str, Any]]:
         rows = self.db.execute(
             "SELECT p.name, count(t.id) AS tasks, sum(t.status = 'open') AS open FROM projects p "

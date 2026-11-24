@@ -201,6 +201,7 @@ No interactive prompts except the `setup` confirmation.
 | `report [--today \| --yesterday \| --week \| --from D --to D] [--round 15m] [--format table\|csv\|json]` | Billable entries |
 | `projects` | List projects |
 | `project add NAME` | Register a project for manual logging |
+| `project rename OLD NEW` | Rename a project; tasks, time and path mappings follow it |
 | `setup [--dry-run] [--yes] [--uninstall]` | Install or remove hooks |
 | `doctor` | Check hooks, executable path, ledger and spool |
 | `hook KIND --agent A` | Internal, called by hooks; always exits 0 |

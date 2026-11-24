@@ -244,3 +244,24 @@ def test_status_answers_where_things_stand(isolated):
     assert "Waiting 1" in text and "next: Reply from the client" in text
     error = run("status", "--project", "typo", "--json", ok=False)
     assert json.loads(error.stderr)["error"]["code"] == "not_found"
+
+
+def test_project_rename_moves_tasks_and_path_mappings(isolated):
+    repo = isolated / "work" / "example-repo"
+    repo.mkdir(parents=True)
+    run("map", str(repo), "old-name")
+    run("map", str(isolated / "other"), "other-project")
+    task = data(run("add", "Example task", "--project", "old-name", "--json"))
+    renamed = data(run("project", "rename", "old-name", "new-name", "--json"))
+    assert renamed["old"] == "old-name" and renamed["name"] == "new-name"
+    assert len(renamed["paths"]) == 1
+    assert data(run("show", task["id"], "--json"))["project"] == "new-name"
+    names = {p["name"] for p in data(run("projects", "--json"))}
+    assert "old-name" not in names and {"new-name", "other-project"} <= names
+    assert data(run("current", "--cwd", str(repo), "--json"))["project"] == "new-name"
+    human = run("project", "rename", "new-name", "x").stdout
+    assert human.startswith("Renamed project new-name to x\n") and "example-repo -> x" in human
+    clash = run("project", "rename", "x", "other-project", ok=False)
+    assert "already exists" in clash.stderr
+    assert "reserved" in run("project", "rename", "x", "inbox", ok=False).stderr
+    assert "Unknown project" in run("project", "rename", "missing", "y", ok=False).stderr

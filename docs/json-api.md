@@ -68,6 +68,7 @@ are raw.
 | report | `{from, to, timezone, rounding_seconds, entries: ReportEntry[], duration_seconds}` |
 | projects | `{name, tasks, open}[]` |
 | project add | `{name}` |
+| project rename | `{old, name, paths}`; `paths` lists the mappings moved to the new name |
 | setup | `{applied: string[], changes: {agent, file, diff}[], cancelled, dry_run}` |
 | doctor | `{ok, checks: {name, ok, detail}[]}` |
 
