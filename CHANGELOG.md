@@ -4,6 +4,8 @@ This project follows Semantic Versioning. Notable changes are recorded here.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-24
+
 - Chats of a task: `show` and the board editor list the chats that work or
   worked on a task, with their directory, last activity, time and the command
   that resumes them (`claude --resume`, `codex resume`, `agy --conversation`).

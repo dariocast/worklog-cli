@@ -1,7 +1,7 @@
 # WorkLog CLI design
 
-Status: implemented in 0.4.0 (0.2 core, the backlog and board section of 0.3 and the
-planning aids of 0.4); the agentic record section is designed for 0.5.
+Status: implemented in 0.5.0 (0.2 core, the backlog and board section of 0.3, the
+planning aids of 0.4 and the agentic record of 0.5).
 Supersedes the 0.1 design.
 
 ## Purpose
@@ -514,7 +514,7 @@ ledger runs both steps.
 
 ## Agentic record (0.5)
 
-Status: designed for 0.5. Everything above stays valid; this section adds to it.
+Status: implemented in 0.5.0. Everything above stays valid; this section adds to it.
 The goal is that the board replaces hand-kept boards in workspaces where
 several chats work on the same tasks: it says which chats work or worked on a
 task, how to get back to them, which tasks are delivered but not done, which
