@@ -4,6 +4,8 @@ This project follows Semantic Versioning. Notable changes are recorded here.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-24
+
 - `worklog project rename OLD NEW` renames a project; its tasks, time and
   the path mappings in the config follow it.
 
