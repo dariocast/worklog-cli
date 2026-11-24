@@ -21,7 +21,8 @@ def event_from(kind: str, agent: str, stream: TextIO) -> dict[str, Any]:
         payload = {}
     if not isinstance(payload, dict):
         payload = {}
-    # Only identifiers and the directory are kept; prompt text is never read.
+    # Only identifiers, the directory and a user-given chat title are kept; prompt text
+    # (`prompt`, `lastUserInput`) is never read.
     session_id = str(payload.get("session_id") or payload.get("conversationId") or "")
     cwd = str(payload.get("cwd") or "")
     return {
@@ -29,8 +30,14 @@ def event_from(kind: str, agent: str, stream: TextIO) -> dict[str, Any]:
         "agent": agent,
         "session_id": session_id,
         "cwd": cwd,
+        "title": text(payload.get("session_title")),
+        "parent": text(payload.get("parentConversationId")),
         "ts": iso(utcnow()),
     }
+
+
+def text(value: Any) -> str | None:
+    return value.strip() or None if isinstance(value, str) else None
 
 
 def run(kind: str, agent: str, db: Path, stdin: TextIO, stdout: TextIO) -> int:

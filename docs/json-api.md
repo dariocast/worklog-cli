@@ -14,16 +14,31 @@ and always exits 0.
   provisional_title: boolean, created_at, duration_seconds,
   description: string|null, rank: number, started: boolean,
   closed_at: string|null, next: string|null, waiting: boolean,
-  dropped: boolean, original: string|null}`. `rank` orders tasks manually (lower first); `started` is
+  dropped: boolean, original: string|null, review: boolean, links: string[],
+  last_activity: string|null, stalled: boolean}`. `rank` orders tasks manually (lower first); `started` is
   true when the task has at least one interval. `closed_at` is null for open
   tasks and for tasks closed before 0.3. `next` is the task's next step,
   `waiting` marks an open task that depends on someone else, `dropped` a
   done task closed without doing it, and `original` holds the verbatim text of
-  a multi-line capture (all 0.4).
-- Task detail (`show`): Task plus `intervals: Interval[]` and
-  `sessions: string[]` (chat keys such as `claude:ab12`).
+  a multi-line capture (all 0.4). `review` marks an open task whose chat work
+  is done but not delivered, `links` lists paths (absolute) and URLs in the
+  order added, `last_activity` is the end of its latest interval, and
+  `stalled` is true for a task in progress or in review whose last activity is
+  older than `stall_after` (all 0.5).
+- Task detail (`show`): Task plus `intervals: Interval[]`,
+  `sessions: string[]` (keys of the chats bound to it, such as `claude:ab12`)
+  and `chats: Chat[]` (0.5).
+- Chat: `{session, agent, title: string|null, cwd, task_id: string|null,
+  first_activity: string|null, last_activity: string|null,
+  duration_seconds, active: boolean, resume: string|null}`. A task's chats are
+  those bound to it and those with intervals on it; `task_id` is the task the
+  chat is bound to now (another one if it moved, null if ignored).
+  `first_activity`, `last_activity` and `duration_seconds` cover the chat's
+  intervals on this task. `active` means its last turn ended within the idle
+  threshold. `resume` is a shell command that reopens the chat from its
+  directory.
 - Interval: `{id, task_id, project, title, started_at, ended_at,
-  duration_seconds, source: "claude"|"codex"|"manual", session: string|null,
+  duration_seconds, source: "claude"|"codex"|"agy"|"manual", session: string|null,
   note: string|null}`. Intervals are always closed.
 - Session: `{session, cwd, ignored, task_id, project, title, ref,
   provisional_title, description: string|null, next: string|null}`.
@@ -40,9 +55,9 @@ are raw.
 | --- | --- |
 | log, move INTERVAL | Interval |
 | rm | Interval plus `recreate`: the `worklog log` command that restores it |
-| add, task add, show, edit | Task (detail for show) |
+| add, task add, show, edit, link | Task (detail for show and link) |
 | brief | `{task_id, text}` |
-| status | `{project, done_days, counts: {inbox, todo, progress, waiting, done}, columns: {inbox, todo, progress, waiting, done: Task[]}}`; board tasks also carry `column` and `directories` |
+| status | `{project, done_days, counts: {inbox, todo, progress, review, waiting, done}, columns: {inbox, todo, progress, review, waiting, done: Task[]}}`; board tasks also carry `column`, `directories` and `chats` |
 | list | Task[] |
 | assign, move --session | Session |
 | map | `{path, target, moved_sessions}` |

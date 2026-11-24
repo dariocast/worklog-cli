@@ -70,8 +70,11 @@ worklog edit ACT-20260930-001 --ref DEMO-123 --done
 worklog edit ACT-20260930-004 --project example-client --description "Asked in the call"
 worklog edit ACT-20260930-002 --next "Send the draft for review"
 worklog edit ACT-20260930-002 --waiting --next "Reply from the client"
+worklog edit ACT-20260930-002 --review --next "Release with the next build"
+worklog link ACT-20260930-002 ~/Workspaces/ExampleClient/specs/001-export/spec.md
+worklog show ACT-20260930-002            # intervals, links and chats, with resume commands
 worklog edit ACT-20260930-005 --drop      # closed without doing it
-worklog board                            # local web board: inbox, to do, in progress, waiting, done
+worklog board                            # local web board: inbox to done, with chats and links
 worklog inbox
 worklog intervals --today
 worklog move 3f2a9c1e --task ACT-20260930-002
@@ -88,9 +91,12 @@ none), the title, the duration and the notes:
 Total 3h30
 ```
 
-`worklog board` opens a page on `127.0.0.1` with five columns (Inbox, To do,
-In progress, Waiting, Done), a List view with time per project and a Timeline
-of what was closed day by day. Type in the field at
+`worklog board` opens a page on `127.0.0.1` with six columns (Inbox, To do,
+In progress, Review, Waiting, Done), a List view with time per project and a Timeline
+of what was closed day by day. Cards show how many chats worked on a task and
+whether one is active now, and flag tasks stalled with no recorded time for a
+week; the editor lists the task's links and chats, with the command that
+resumes each chat. Type in the field at
 the top to note something (`@project text` files it directly), drag cards to
 triage, reorder or close them, and click a card to edit it. A task is "in
 progress" only once it has recorded time, from a chat bound to it or from
@@ -105,6 +111,7 @@ what you logged.
 ```toml
 # ~/.config/worklog/config.toml
 idle_threshold = "15m"
+stall_after = "7d"        # optional: when a task in progress or review counts as stalled
 
 [paths]
 "~/Workspaces/ExampleClient" = "example-client"

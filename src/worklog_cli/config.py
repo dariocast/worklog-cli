@@ -17,6 +17,7 @@ IGNORE = "ignore"
 INBOX = "inbox"
 RESERVED = {IGNORE, INBOX}
 DEFAULT_IDLE = "15m"
+DEFAULT_STALL = "7d"
 
 
 def xdg_path(variable: str, fallback: str) -> Path:
@@ -49,10 +50,19 @@ def display_path(path: Path) -> str:
 class Config:
     idle_threshold: str = DEFAULT_IDLE
     paths: dict[str, str] = field(default_factory=dict)
+    stall_after: str = DEFAULT_STALL
 
     @property
     def idle_seconds(self) -> int:
         return 0 if self.idle_threshold in ("0", "0m") else parse_duration(self.idle_threshold)
+
+    @property
+    def stall_seconds(self) -> int:
+        """Days (``7d``) or any duration accepted by ``log`` (``36h``)."""
+        value = self.stall_after.strip()
+        if value[:-1].isdigit() and value.endswith("d") and int(value[:-1]) > 0:
+            return int(value[:-1]) * 86400
+        return parse_duration(value)
 
     def resolve(self, directory: str | Path) -> str | None:
         """Project name, ``ignore``, or None for the inbox. Most specific path wins."""
@@ -76,29 +86,36 @@ def load(path: Path | None = None) -> Config:
             data: dict[str, Any] = tomllib.load(handle)
     except (OSError, ValueError) as exc:
         raise WorklogError(f"Cannot read config {path}: {exc}", "config_error") from exc
-    unknown = set(data) - {"idle_threshold", "paths"}
+    unknown = set(data) - {"idle_threshold", "paths", "stall_after"}
     if unknown:
         raise WorklogError(f"Unknown config keys in {path}: {sorted(unknown)}", "config_error")
     idle = data.get("idle_threshold", DEFAULT_IDLE)
+    stall = data.get("stall_after", DEFAULT_STALL)
     paths = data.get("paths", {})
     if not isinstance(idle, str):
         raise WorklogError(f"idle_threshold must be a string like '15m' in {path}", "config_error")
+    if not isinstance(stall, str):
+        raise WorklogError(f"stall_after must be a string like '7d' in {path}", "config_error")
     if not isinstance(paths, dict) or any(
         not isinstance(v, str) or not v.strip() for v in paths.values()
     ):
         raise WorklogError(f"[paths] values must be project names in {path}", "config_error")
-    config = Config(idle, dict(paths))
-    try:
-        config.idle_seconds  # noqa: B018 - validate eagerly
-    except WorklogError as exc:
-        raise WorklogError(f"{exc} (idle_threshold in {path})", "config_error") from exc
+    config = Config(idle, dict(paths), stall)
+    for key, seconds in (("idle_threshold", "idle_seconds"), ("stall_after", "stall_seconds")):
+        try:
+            getattr(config, seconds)  # validate eagerly
+        except WorklogError as exc:
+            raise WorklogError(f"{exc} ({key} in {path})", "config_error") from exc
     return config
 
 
 def save(config: Config, path: Path | None = None) -> None:
     """Rewrite the config file. Comments are not preserved."""
     path = path or config_path()
-    lines = [f"idle_threshold = {json.dumps(config.idle_threshold)}", "", "[paths]"]
+    lines = [f"idle_threshold = {json.dumps(config.idle_threshold)}"]
+    if config.stall_after != DEFAULT_STALL:
+        lines.append(f"stall_after = {json.dumps(config.stall_after)}")
+    lines += ["", "[paths]"]
     lines += [f"{json.dumps(k)} = {json.dumps(v)}" for k, v in sorted(config.paths.items())]
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")

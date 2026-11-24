@@ -6,6 +6,7 @@ const COLUMNS = [
   ["inbox", "Inbox"],
   ["todo", "To do"],
   ["progress", "In progress"],
+  ["review", "Review"],
   ["waiting", "Waiting"],
   ["done", "Done"],
 ];
@@ -14,6 +15,7 @@ const STATUS_BADGE = {
   inbox: "badge badge-outline",
   todo: "badge badge-secondary",
   progress: "badge badge-success",
+  review: "badge badge-outline",
   waiting: "badge badge-warning",
   done: "badge badge-muted",
 };
@@ -60,6 +62,30 @@ function duration(seconds) {
 
 function quote(path) {
   return "'" + path.replaceAll("'", "'\\''") + "'";
+}
+
+const DAY = 86400000;
+function ago(iso) {
+  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)}h ago`;
+  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+function stalledDays(task) {
+  return Math.floor((Date.now() - Date.parse(task.last_activity)) / DAY);
+}
+
+function web(link) {
+  return /^https?:\/\//i.test(link);
+}
+
+function copyText(text, done, title) {
+  // Where the browser refuses the clipboard, the text is shown selected instead.
+  const fallback = () => showText(title, "The browser did not allow copying. Copy this text by hand.", text);
+  if (!navigator.clipboard) { fallback(); return; }
+  navigator.clipboard.writeText(text).then(() => toast(done), fallback);
 }
 
 let toastTimer = 0;
@@ -199,6 +225,7 @@ function renderBoard() {
     } else {
       column.append(...tasks.map(card));
       if (key === "inbox" && !tasks.length) column.append(el("p", { className: "hint" }, "Nothing to triage."));
+      if (key === "review" && !tasks.length) column.append(el("p", { className: "hint" }, "Nothing awaiting delivery."));
       if (key === "waiting" && !tasks.length) column.append(el("p", { className: "hint" }, "Nothing waiting on others."));
       if (key === "done" && !tasks.length) column.append(el("p", { className: "hint" }, "Nothing closed recently."));
       if (key === "done") column.append(el("div", { className: "column-foot" }, doneToggle()));
@@ -216,7 +243,11 @@ function card(task) {
     task.column !== "todo" && task.column !== "inbox" ? el("span", { className: "badge badge-outline" }, task.project) : null,
     task.ref ? el("span", { className: "badge badge-secondary" }, task.ref) : null,
     task.dropped ? el("span", { className: "badge badge-muted" }, "Dropped") : null,
-    task.duration_seconds > 0 ? el("span", { className: "time" }, duration(task.duration_seconds)) : null);
+    task.stalled ? el("span", {
+      className: "badge badge-warning", title: "No recorded time for a while",
+    }, `Stalled ${stalledDays(task)}d`) : null,
+    task.duration_seconds > 0 ? el("span", { className: "time" }, duration(task.duration_seconds)) : null,
+    chatCount(task));
   const node = el("article", {
     className: "card task", draggable: "true", "data-id": task.id,
     onclick: () => { state.editing = task.id; render(); },
@@ -250,6 +281,16 @@ function card(task) {
     : null);
   dropZone(node, { column: task.column, project: task.column === "todo" ? task.project : null, anchor: task });
   return node;
+}
+
+function chatCount(task) {
+  const chats = task.chats || [];
+  if (!chats.length) return null;
+  const active = chats.filter((c) => c.active).length;
+  const label = `${chats.length} ${chats.length === 1 ? "chat" : "chats"}`;
+  return el("span", {
+    className: "chats", title: active ? `${label}, ${active} active now` : label,
+  }, active ? el("span", { className: "live", "aria-label": "active now" }) : null, label);
 }
 
 function originalNote(task, ...extra) {
@@ -316,6 +357,21 @@ function editor(task) {
     close();
     change("PATCH", `/api/tasks/${task.id}`, { ...fields(), clear_original: true });
   };
+  const linkTo = async (target, remove = false) => {
+    // Pending edits are saved first, so the reloaded editor keeps them.
+    if (JSON.stringify(fields()) !== initial && !(await change("PATCH", `/api/tasks/${task.id}`, fields()))) return;
+    await change("POST", `/api/tasks/${task.id}/links`, { target, remove });
+  };
+  const newLink = el("input", {
+    className: "input", placeholder: "Path or URL of a spec, plan or results file", "aria-label": "New link",
+    "data-action": "link",
+    onkeydown: (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (newLink.value.trim()) { state.focusAction = "link"; linkTo(newLink.value.trim()); }
+    },
+  });
   const form = el("form", {
     className: "edit",
     onsubmit: (event) => { event.preventDefault(); save(); },
@@ -329,6 +385,24 @@ function editor(task) {
   field("Project", el("div", { className: "select-wrap" }, project)),
   field("Next step", next),
   field("Description", description),
+  el("div", { className: "label" }, "Links",
+    (task.links || []).length ? el("ul", { className: "links" }, task.links.map((link) => el("li", {},
+      web(link)
+        ? el("a", { href: link, target: "_blank", rel: "noopener noreferrer" }, link)
+        : el("span", { className: "path" }, link),
+      web(link) ? null : el("button", {
+        type: "button", className: "btn btn-sm btn-ghost", onclick: () => copyText(link, "Path copied.", "Copy the path"),
+      }, "Copy"),
+      el("button", {
+        type: "button", className: "btn btn-sm btn-ghost", "aria-label": `Remove link ${link}`,
+        onclick: () => linkTo(link, true),
+      }, "Remove")))) : null,
+    el("div", { className: "link-add" }, newLink, el("button", {
+      type: "button", className: "btn btn-sm btn-outline",
+      onclick: () => { if (newLink.value.trim()) { state.focusAction = "link"; linkTo(newLink.value.trim()); } },
+    }, "Add"))),
+  (task.chats || []).length ? el("div", { className: "label" }, "Chats",
+    el("ul", { className: "chat-list" }, task.chats.map((chat) => chatItem(task, chat)))) : null,
   task.original ? originalNote(task, el("button", {
     type: "button", className: "btn btn-sm btn-ghost", title: "Once triaged, the note is no longer needed",
     onclick: clearOriginal,
@@ -359,6 +433,11 @@ function editor(task) {
       title: task.waiting ? "Back to work" : "It depends on someone else",
       onclick: () => { close(); change("PATCH", `/api/tasks/${task.id}`, { ...fields(), waiting: !task.waiting }); },
     }, task.waiting ? "Resume" : "Waiting"),
+    done || task.project === "inbox" ? null : el("button", {
+      type: "button", className: "btn btn-sm btn-outline",
+      title: task.review ? "More chat work is needed" : "Chat work is done; delivery is pending",
+      onclick: () => { close(); change("PATCH", `/api/tasks/${task.id}`, { ...fields(), review: !task.review }); },
+    }, task.review ? "Back to work" : "Review"),
     done ? null : el("button", {
       type: "button", className: "btn btn-sm btn-outline", title: "Close without doing it",
       onclick: () => { close(); change("PATCH", `/api/tasks/${task.id}`, { ...fields(), status: "dropped" }); },
@@ -377,13 +456,36 @@ function editor(task) {
   return form;
 }
 
+function chatItem(task, chat) {
+  const facts = [
+    chat.title ? chat.session : null,
+    chat.last_activity ? `last ${ago(chat.last_activity)}` : null,
+    chat.duration_seconds > 0 ? duration(chat.duration_seconds) : null,
+    chat.task_id !== task.id ? (chat.task_id ? `now on ${chat.task_id}` : "no longer tracked") : null,
+  ].filter(Boolean);
+  return el("li", {},
+    el("div", { className: "chat-head" },
+      chat.active ? el("span", { className: "live", "aria-label": "active now", title: "Active now" }) : null,
+      el("span", { className: "chat-name" }, chat.title || chat.session),
+      chat.resume ? el("button", {
+        type: "button", className: "btn btn-sm btn-ghost push", title: chat.resume,
+        onclick: () => copyText(chat.resume, "Resume command copied: run it in a terminal.", "Resume this chat"),
+      }, "Copy resume") : null),
+    el("div", { className: "chat-facts" }, facts.join(" · ")),
+    chat.cwd ? el("div", { className: "path" }, chat.cwd) : null);
+}
+
 function showBrief(text) {
-  // Without clipboard access the brief is shown selected, ready for Cmd+C or Ctrl+C.
-  const area = el("textarea", { className: "textarea", readonly: true, rows: "12", "aria-label": "Brief" });
+  showText("Copy the brief", "The browser did not allow copying. Copy this text and paste it in a new chat.", text);
+}
+
+function showText(title, message, text) {
+  // Without clipboard access the text is shown selected, ready for Cmd+C or Ctrl+C.
+  const area = el("textarea", { className: "textarea", readonly: true, rows: "12", "aria-label": title });
   area.value = text;
   const dialog = el("dialog", { className: "dialog", "aria-labelledby": "brief-title", onclose: () => dialog.remove() },
-    el("h2", { id: "brief-title" }, "Copy the brief"),
-    el("p", {}, "The browser did not allow copying. Copy this text and paste it in a new chat."),
+    el("h2", { id: "brief-title" }, title),
+    el("p", {}, message),
     area,
     el("div", { className: "actions" },
       el("button", { type: "button", className: "btn btn-sm", onclick: () => dialog.close() }, "Close")));
@@ -408,30 +510,32 @@ function plan(task, target) {
   if (target.anchor && target.anchor.id === task.id) return { skip: true };
   const position = target.anchor ? { [target.position]: target.anchor.id } : {};
   const reorder = target.anchor ? { body: position } : { skip: true };
-  const waiting = task.column === "waiting";
-  if (target.column === "waiting" && task.column === "inbox") return { reject: "Choose a project before waiting on someone." };
+  // Waiting and review are flags: leaving one of them clears it.
+  const parked = task.column === "waiting" || task.column === "review";
+  const resume = parked ? { [task.column]: false } : {};
+  const flagged = target.column === "waiting" || target.column === "review";
+  if (flagged && task.column === "inbox") return { reject: "Choose a project first." };
   if (task.column === "done") {
     if (target.column === "done") return { skip: true };
-    return { body: target.column === "waiting" ? { status: "open", waiting: true } : { status: "open" } };
+    return { body: flagged ? { status: "open", [target.column]: true } : { status: "open" } };
   }
   if (target.column === "done") return { body: { status: "done" } };
-  if (target.column === "waiting") return waiting ? reorder : { body: { waiting: true, ...position } };
+  if (flagged) return task.column === target.column ? reorder : { body: { [target.column]: true, ...position } };
   if (target.column === "inbox") {
     if (task.column !== "inbox") return { reject: "Tasks never go back to the inbox; choose the right project." };
     return reorder;
   }
   if (target.column === "progress") {
-    if (waiting && task.started) return { body: { waiting: false, ...position } };
+    if (parked && task.started) return { body: { ...resume, ...position } };
     if (task.column !== "progress") return { reject: "Only recorded time puts a task in progress." };
     return reorder;
   }
   // To do
   if (task.column === "progress") return { reject: "To change the project of a task with time, edit its card." };
-  if (waiting && task.started) return { reject: "A task with recorded time resumes in progress." };
-  const resume = waiting ? { waiting: false } : {};
-  if (!target.project) return waiting ? { body: resume } : { skip: true };
+  if (parked && task.started) return { reject: "A task with recorded time resumes in progress." };
+  if (!target.project) return parked ? { body: resume } : { skip: true };
   if (target.project !== task.project) return { body: { ...resume, project: target.project, ...position } };
-  return waiting ? { body: { ...resume, ...position } } : reorder;
+  return parked ? { body: { ...resume, ...position } } : reorder;
 }
 
 function dropZone(node, target) {

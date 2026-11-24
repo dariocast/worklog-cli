@@ -188,9 +188,23 @@ def test_status_counts_columns_and_filters_by_project(ledger):
     ledger.edit(waiting["id"], waiting=True)
     ledger.log(at("09:00"), at("10:00"), project="other-project", title="Meeting")
     status = status_data(ledger)
-    assert status["counts"] == {"inbox": 1, "todo": 1, "progress": 1, "waiting": 1, "done": 0}
+    assert status["counts"] == {
+        "inbox": 1,
+        "todo": 1,
+        "progress": 1,
+        "review": 0,
+        "waiting": 1,
+        "done": 0,
+    }
     assert status["columns"]["todo"][0]["next"] == "Write the outline"
     mine = status_data(ledger, "example-project")
-    assert mine["counts"] == {"inbox": 0, "todo": 1, "progress": 0, "waiting": 1, "done": 0}
+    assert mine["counts"] == {
+        "inbox": 0,
+        "todo": 1,
+        "progress": 0,
+        "review": 0,
+        "waiting": 1,
+        "done": 0,
+    }
     with pytest.raises(WorklogError, match="Unknown project"):
         status_data(ledger, "typo")

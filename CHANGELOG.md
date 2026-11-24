@@ -4,6 +4,26 @@ This project follows Semantic Versioning. Notable changes are recorded here.
 
 ## [Unreleased]
 
+- Chats of a task: `show` and the board editor list the chats that work or
+  worked on a task, with their directory, last activity, time and the command
+  that resumes them (`claude --resume`, `codex resume`, `agy --conversation`).
+  Cards show the number of chats and mark an active one. A chat shows the title
+  the user gave it (Claude Code `/rename`, Codex thread names), otherwise its
+  short ID. JSON: `chats` on task details and board tasks.
+- Forks: an Antigravity chat forked from a tracked chat joins its task; the
+  chat note asks Claude Code and Codex forks to bind themselves to the task
+  named by an earlier WorkLog note. Chats already open get the updated note
+  once on their next prompt.
+- Review (schema 6): `edit --review` or `assign --review` moves an open task
+  whose chat work is done but not delivered to a new Review column, between In
+  progress and Waiting. A new agent turn puts it back in progress.
+- Links: `worklog link ID PATH|URL` (`--rm` to remove) points a task to its
+  spec, plan or results file; shown by `show`, `brief` and the board.
+- Stalled tasks: tasks in progress or in review without recorded time for
+  `stall_after` (default 7 days) are flagged on the board and by `status`.
+  JSON tasks gain `review`, `links`, `last_activity` and `stalled`.
+- Workspace rules in docs/agents.md replace hand-kept board and inbox files.
+
 ## [0.4.0] - 2026-10-21
 
 - `worklog assign --description` lets the agent describe its chat's task, and

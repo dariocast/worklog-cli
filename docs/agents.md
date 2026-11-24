@@ -22,7 +22,8 @@ few tokens per chat. `SessionStart` is not used: Codex rejects
 `additionalContext` there. Claude Code does not run `Stop` when a turn is
 interrupted; the heartbeat covers that case.
 
-Hooks read only `session_id` and `cwd` from the payload, never the prompt,
+Hooks read only `session_id`, `cwd` and the chat title the user set
+(`session_title`, Claude Code) from the payload, never the prompt,
 always exit 0, and take about 50 ms, mostly Python startup. Heartbeats only
 append to the spool. If the ledger cannot be written, events go to the spool
 and are recorded by the next command. Problems appear in `worklog doctor`.
@@ -37,7 +38,9 @@ What the agent is asked to do, and nothing more:
   a planning chat; put the task ID in handoffs;
 - `worklog assign --session KEY --next "..."` when the next step changes (a
   handoff, a blocker, the end of a work session), with `--waiting` when the
-  task now depends on someone outside the chat;
+  task now depends on someone outside the chat, or `--review` when its chat
+  work is done but not delivered;
+- `worklog link TASK PATH` to point the task to its spec, plan or results file;
 - `worklog status --json` when asked where things stand;
 - `worklog map PATH PROJECT` after asking the user, when the chat is in the
   inbox;
@@ -45,6 +48,32 @@ What the agent is asked to do, and nothing more:
 
 If you previously imported a WorkLog rule into `CLAUDE.md` or `AGENTS.md`,
 remove it: with hooks it is redundant, and older versions asked for consent.
+
+## Workspace rules
+
+In a workspace where several chats share a backlog, WorkLog can replace a
+hand-kept board file and inbox file. Paste this block into the workspace's
+`AGENTS.md` (or `CLAUDE.md`) and remove the rules about those files:
+
+```markdown
+## Work tracking
+
+The WorkLog board is the only board: never keep one in a file.
+
+- Something found outside your task: `worklog add "..." --project P`, in your
+  own words. Never fix it on the side.
+- Where things stand: `worklog status`. Planned work starts in a new chat from
+  `worklog brief ID`.
+- Your chat's task: keep its next step current with
+  `worklog assign --session KEY --next "..."`; add `--review` when the work is
+  done but not delivered (verification, merge, release) and `--waiting` when it
+  depends on someone outside the team.
+- Documents of the task (spec, plan, results): `worklog link ID PATH`.
+- Only the user closes a task: `worklog edit ID --done` or `--drop` when asked.
+```
+
+Existing cards are moved once, by hand or with an agent (`worklog add`,
+`edit`, `link`); there is no importer.
 
 ## Other agents
 

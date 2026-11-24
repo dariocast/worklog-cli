@@ -22,12 +22,16 @@ def render(info: dict[str, Any]) -> str:
         f'`worklog assign --session {session} --title "..." --description "..."`'
         " (description: one or two sentences, in your own words, on what is being done and why;"
         " add `--ref KEY` if a tracker key is known). If it continues an open or planned task"
-        f" (`worklog list --open --json`), use `worklog assign --session {session} --task ID`.",
+        f" (`worklog list --open --json`), use `worklog assign --session {session} --task ID`;"
+        " do the same when an earlier WorkLog note in this chat names another task (this chat"
+        " is a fork or a continuation of it).",
         'To note something for later, run `worklog add "..."` (add `--project P` if known);'
         " it does not change this chat's task. To see where things stand: `worklog status --json`.",
         "When the next step changes (a handoff, a blocker, the end of a work session), record it"
         f' in one line: `worklog assign --session {session} --next "..."`; add `--waiting` when'
-        " the task now depends on someone outside this chat.",
+        " the task now depends on someone outside this chat, or `--review` when its chat work is"
+        " done but not yet delivered. To point the task to a spec, plan or results file, run"
+        " `worklog link TASK PATH`.",
         "Put the task ID in any handoff. If the user says not to track this chat, run "
         f"`worklog ignore --session {session}`. Do not otherwise mention WorkLog.",
     ]
@@ -47,6 +51,8 @@ def brief(task: dict[str, Any]) -> str:
         facts.append("closed (dropped)" if task["dropped"] else "closed")
     elif task["waiting"]:
         facts.append("was waiting on someone else")
+    elif task.get("review"):
+        facts.append("in review: chat work done, not yet delivered")
     lines.append("(" + ", ".join(facts) + ")")
     if task["description"]:
         lines += ["", "What and why:", task["description"]]
@@ -54,6 +60,8 @@ def brief(task: dict[str, Any]) -> str:
         lines += ["", f"Next step: {task['next']}"]
     if task["original"]:
         lines += ["", "Original note:", task["original"]]
+    if task.get("links"):
+        lines += ["", "Documents:", *(f"- {link}" for link in task["links"])]
     lines += [
         "",
         "Before starting, bind this chat to the task with the session key from the WorkLog"

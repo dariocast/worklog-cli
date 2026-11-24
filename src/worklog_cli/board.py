@@ -23,7 +23,7 @@ from worklog_cli.ledger import STATUSES, Ledger
 from worklog_cli.timeutil import parse_iso
 
 DONE_DAYS = 14
-COLUMNS = ("inbox", "todo", "progress", "waiting", "done")
+COLUMNS = ("inbox", "todo", "progress", "review", "waiting", "done")
 MAX_BODY = 64 * 1024
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -47,6 +47,8 @@ def column(task: dict[str, Any]) -> str:
         return "inbox"
     if task["waiting"]:
         return "waiting"
+    if task["review"]:
+        return "review"
     return "progress" if task["started"] else "todo"
 
 
@@ -56,7 +58,9 @@ def board_data(ledger: Ledger, all_done: bool = False) -> dict[str, Any]:
     for item in ledger.inbox():
         cwds.setdefault(item["task_id"], []).append(item["cwd"])
     tasks = []
-    for task in sorted(ledger.tasks(), key=lambda t: (t["rank"], t["created_at"])):
+    every = ledger.tasks()
+    chats = ledger.chats([t["id"] for t in every])
+    for task in sorted(every, key=lambda t: (t["rank"], t["created_at"])):
         task["column"] = column(task)
         if (
             task["column"] == "done"
@@ -65,6 +69,7 @@ def board_data(ledger: Ledger, all_done: bool = False) -> dict[str, Any]:
         ):
             continue
         task["directories"] = sorted(set(cwds.get(task["id"], [])))
+        task["chats"] = chats.get(task["id"], [])
         tasks.append(task)
     projects = [p["name"] for p in ledger.projects() if p["name"] not in config.RESERVED]
     return {"tasks": tasks, "projects": projects, "done_days": DONE_DAYS}
@@ -82,6 +87,13 @@ def status_data(ledger: Ledger, project: str | None = None) -> dict[str, Any]:
         "counts": {key: len(items) for key, items in columns.items()},
         "columns": columns,
     }
+
+
+def flag(body: dict[str, Any], name: str) -> bool | None:
+    value = body.get(name)
+    if value is not None and not isinstance(value, bool):
+        raise WorklogError(f"{name} must be a boolean", "validation_error")
+    return value
 
 
 def text_field(body: dict[str, Any], name: str) -> str | None:
@@ -209,15 +221,19 @@ def dispatch(
     prefix = "/api/tasks/"
     if path.startswith(prefix) and path.endswith("/brief") and method == "GET":
         return ledger.brief(path[len(prefix) : -len("/brief")])
+    if path.startswith(prefix) and path.endswith("/links") and method == "POST":
+        target = text_field(body, "target")
+        if target is None:
+            raise WorklogError("target is required", "validation_error")
+        return ledger.link(
+            path[len(prefix) : -len("/links")], target, remove=flag(body, "remove") is True
+        )
     if path.startswith(prefix) and len(path) > len(prefix):
         task_id = path[len(prefix) :]
         if method == "PATCH":
             status = text_field(body, "status")
             if status not in (None, *STATUSES):
                 raise WorklogError("status must be open, done or dropped", "validation_error")
-            waiting = body.get("waiting")
-            if waiting is not None and not isinstance(waiting, bool):
-                raise WorklogError("waiting must be a boolean", "validation_error")
             return ledger.edit(
                 task_id,
                 title=text_field(body, "title"),
@@ -226,7 +242,8 @@ def dispatch(
                 project=text_field(body, "project"),
                 description=text_field(body, "description"),
                 next_step=text_field(body, "next"),
-                waiting=waiting,
+                waiting=flag(body, "waiting"),
+                review=flag(body, "review"),
                 clear_original=body.get("clear_original") is True,
                 before=text_field(body, "before"),
                 after=text_field(body, "after"),

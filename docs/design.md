@@ -1,15 +1,23 @@
 # WorkLog CLI design
 
 Status: implemented in 0.4.0 (0.2 core, the backlog and board section of 0.3 and the
-planning aids of 0.4).
+planning aids of 0.4); the agentic record section is designed for 0.5.
 Supersedes the 0.1 design.
 
 ## Purpose
 
-Record billable working time with minimal effort, so it can later be logged in
-Jira, GoodDay or any other tracker, or used on its own. Agent work is captured
-automatically and deterministically; work without agents is entered by hand.
-The same local ledger and CLI serve both. The project is public on GitHub.
+WorkLog is the local record of work done with agents. For each task it knows
+what it is, where it stands, which chats work or worked on it and where, how
+much time it took and what comes next. It is derived from events and written by
+agents through the CLI, so no board has to be kept by hand. It is a record, not
+a project manager: features are added only for a recurring need, and the
+out-of-scope list below still holds unless a section says otherwise.
+
+It started as a way to record billable working time with minimal effort, so it
+can later be logged in Jira, GoodDay or any other tracker, or used on its own,
+and that remains its base. Agent work is captured automatically and
+deterministically; work without agents is entered by hand. The same local
+ledger and CLI serve both. The project is public on GitHub.
 
 Principles:
 
@@ -69,7 +77,8 @@ Linux: ledger in `$XDG_DATA_HOME/worklog/ledger.db` (a new file, so a 0.1
 
 Supported fully: Claude Code (CLI and desktop Code tab) and Codex, which share
 the events used here. Each hook runs `worklog hook KIND --agent NAME` and reads
-only `session_id` and `cwd` from the event JSON on stdin; the time is the
+only `session_id` and `cwd` from the event JSON on stdin (since 0.5 also a
+user-given chat title and a parent chat, see Agentic record); the time is the
 moment the hook runs.
 
 | Event | Kind | Effect |
@@ -180,8 +189,9 @@ No interactive prompts except the `setup` confirmation.
 | `show ID` | Task with intervals |
 | `brief ID` | Text to paste in a new chat to work on a task (0.4) |
 | `status [--project P]` | Board columns in short, with next steps (0.4) |
-| `edit ID [--title T] [--ref R] [--next N] [--done \| --drop \| --open] [--waiting \| --no-waiting]` | Change a task |
-| `assign --session S [--task ID] [--title T] [--description D] [--next N] [--waiting \| --no-waiting] [--ref R] [--project P]` | Bind a chat to a task, or name, describe or move its task |
+| `edit ID [--title T] [--ref R] [--next N] [--done \| --drop \| --open] [--waiting \| --no-waiting] [--review \| --no-review]` | Change a task |
+| `assign --session S [--task ID] [--title T] [--description D] [--next N] [--waiting \| --no-waiting] [--review \| --no-review] [--ref R] [--project P]` | Bind a chat to a task, or name, describe or move its task |
+| `link ID PATH\|URL [--rm]` | Point a task to a document (0.5) |
 | `map PATH PROJECT` / `map PATH ignore` | Map a directory; moves its inbox time |
 | `inbox` | Unassigned time by directory and session |
 | `ignore --session S` | Stop tracking a chat and discard its time |
@@ -273,7 +283,7 @@ intervals. Time is never created or deleted by the board.
 | any project → Inbox | | no: `inbox` is reserved | no |
 | open → Done | | `edit --done` | drop on Done |
 | Done → open (derived column) | agent turn on a bound chat | `edit --open` | drag out of Done (reopen only, project unchanged) |
-| open or done → deleted | provisional task left without time or chats | `task rm` (`--force` with time) | only tasks without time |
+| open or done → deleted | provisional task left without time, chats or links | `task rm` (`--force` with time) | only tasks without time |
 | order | | `edit --before ID2`, `edit --after ID2`, `edit --top` | drag within a column |
 
 `map` writes configuration, so the board only shows the command and never runs
@@ -379,7 +389,8 @@ blocked by an idle board. API responses use the JSON envelope of
 | --- | --- |
 | `GET /api/board` | Open tasks, recent done tasks, projects |
 | `POST /api/tasks` | `add` |
-| `PATCH /api/tasks/ID` | `edit` (title, ref, description, project, status, before, after, top) |
+| `PATCH /api/tasks/ID` | `edit` (title, ref, description, project, status, waiting, review, before, after, top) |
+| `POST /api/tasks/ID/links` | `link` (target, remove) (0.5) |
 | `DELETE /api/tasks/ID` | `task rm` without force |
 
 ### JSON API
@@ -500,6 +511,127 @@ same inline editor.
 
 Migration 3 → 4 adds the columns in one transaction, like 2 → 3; a schema 2
 ledger runs both steps.
+
+## Agentic record (0.5)
+
+Status: designed for 0.5. Everything above stays valid; this section adds to it.
+The goal is that the board replaces hand-kept boards in workspaces where
+several chats work on the same tasks: it says which chats work or worked on a
+task, how to get back to them, which tasks are delivered but not done, which
+work has stalled, and where each task's documents are. Terms follow
+[GLOSSARY.md](../GLOSSARY.md).
+
+### Chats of a task
+
+The ledger already binds each chat to a task (`agent_sessions`) and records
+its turns (`intervals`). 0.5 shows it; it never scans agents' folders or
+transcripts, so chats not seen by a hook stay unknown.
+
+A task's chats are those bound to it now, plus those with intervals on it but
+bound elsewhere now (moved with `move INTERVAL`), shown as "now on ACT-…". For
+each chat:
+
+- agent, session key, chat title (below) and directory;
+- first and last activity, from its intervals on this task;
+- time on this task: its intervals joined with the idle threshold, like a
+  task's time;
+- **active** when its last turn ended less than the idle threshold ago;
+- the command that resumes it, run from its directory:
+  `cd DIR && claude --resume ID`, `cd DIR && codex resume ID`,
+  `cd DIR && agy --conversation ID`. The board copies it and never runs it.
+
+Board cards show the number of chats and mark one as active; the editor lists
+them. `show` prints them and its JSON gains `chats`.
+
+### Chat title
+
+A chat title is the name the user gave a chat in its agent. It is stored on the
+chat (schema 6, `agent_sessions.title`), replaced when it changes, and shown
+instead of the short ID; chats without one are shown by their short ID.
+
+- Claude Code passes `session_title` to `UserPromptSubmit` when the user set
+  one (`/rename`, `--name`). The hook keeps that field and still never reads
+  the prompt. Generated titles are not available to hooks and are not used.
+- Codex passes no title to hooks but keeps user-given names in
+  `$CODEX_HOME/session_index.jsonl` (lines `{id, thread_name, updated_at}`,
+  the last line for an id wins). WorkLog reads that file, read-only and only
+  when listing chats, as the one declared exception to "never read agents'
+  files": it holds names, not prompts. A missing file or an unknown format
+  falls back to the short ID silently.
+- Antigravity passes no title to hooks; its chats show the short ID.
+
+Antigravity sends the prompt text in `lastUserInput` with every event; like
+`prompt` for the other agents, the hook ignores it.
+
+### Forks
+
+A fork is a chat started from another chat's history, with its own session
+key. When the hook payload names the parent chat (`parentConversationId` from
+Antigravity; any agent that adds it later gets the same rule) and the parent is
+bound to a task, the fork's first event binds it to that task instead of
+creating a provisional one. Claude Code and Codex give hooks no parent, so the
+injected note gains one static line: if an earlier WorkLog note in this chat
+names another task, this chat continues it and should be bound with
+`assign --task ID`. The provisional task left behind is removed as before.
+
+### Review
+
+A sixth board column, between In progress and Waiting: an open task whose chat
+work is finished but not delivered (verification, merge or release pending).
+Stored as the `review` flag (schema 6), like `waiting`; the difference between
+verification and release goes in the next step.
+
+| Change | CLI / agent | Board |
+| --- | --- | --- |
+| open → review | `edit --review`, `assign --session S --review` | drop on Review; Review button |
+| review → open | `edit --no-review`; a new agent turn on a bound chat | drag to In progress or To do; Back to work button |
+| done → review | `edit --open --review` | drop on Review |
+
+Review and waiting exclude each other: setting one clears the other. Closing a
+task clears review; inbox tasks cannot be in review. A new agent turn clears
+review in the same transaction as waiting and reopening: if verification needs
+more chat work, the card shows it. Heartbeats and manual logs change nothing.
+
+### Links
+
+A task may point to documents: its spec, plan, results file or tracker page.
+Links are paths or URLs, without types or labels, in their own table
+(schema 6). This lifts "multiple external references" from the 0.2 exclusions;
+`ref` stays the single tracker key used by reports.
+
+- `worklog link ID TARGET` adds one, `worklog link ID --rm TARGET` removes
+  one. A target with a URL scheme (`https://…`) is kept as given; anything
+  else is a local path, stored absolute with `~` expanded, without checking
+  that it exists. Adding an existing link changes nothing.
+- `show`, `brief`, the board and Task JSON (`links`) list them in the order
+  added. The board opens URLs and copies paths: a browser cannot reliably open
+  local files.
+- Deleting a task deletes its links.
+
+### Stalled tasks
+
+A task in progress or in review is **stalled** when its last recorded time is
+older than `stall_after` (config, default `"7d"`; days, or any `log`
+duration). Derived at read time: no state, no automatic change. Waiting
+tasks are excluded, since waiting is expected. Task JSON gains
+`last_activity` (end of its latest interval, or null) and `stalled`; cards
+show "stalled Nd"; `status` lists stalled tasks on their own line.
+
+### Workspace rules
+
+[agents.md](agents.md) gains a block to paste into a workspace's `AGENTS.md`
+that replaces rules for hand-kept boards and inbox files: capture out-of-scope
+findings with `worklog add`, answer "where are we" with `worklog status`, start
+planned work from `worklog brief`, link documents with `worklog link`, move a
+task to review or waiting instead of editing a board file. There is no
+importer: hand-kept boards have no common format, and moving their cards is a
+one-time job for the user with an agent.
+
+Out of scope: release calendars and versions in the field, dependencies
+between tasks, messages between chats, configurable columns.
+
+Migration 5 → 6 adds `agent_sessions.title`, `tasks.review` and the `links`
+table in one transaction. JSON fields are only added (see json-api.md).
 
 ## Setup
 

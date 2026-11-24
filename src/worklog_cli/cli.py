@@ -107,6 +107,7 @@ def parser() -> Parser:
     status.add_argument("--drop", action="store_true", help="Close without doing it")
     status.add_argument("--open", action="store_true")
     waiting_option(edit)
+    review_option(edit)
     edit.add_argument("--project", help="Move the task to another project")
     edit.add_argument("--description", help="Free text; empty string clears it")
     edit.add_argument("--next", help="The next step, in one line; empty string clears it")
@@ -127,6 +128,12 @@ def parser() -> Parser:
     assign.add_argument("--description", help="What the chat works on; empty string clears it")
     assign.add_argument("--next", help="The task's next step; empty string clears it")
     waiting_option(assign)
+    review_option(assign)
+
+    link = commands.add_parser("link", help="Point a task to a document: a path or a URL")
+    link.add_argument("task_id")
+    link.add_argument("target", metavar="PATH|URL")
+    link.add_argument("--rm", action="store_true", help="Remove the link instead")
 
     mapping = commands.add_parser("map", help="Map a directory to a project, or to ignore")
     mapping.add_argument("path")
@@ -173,6 +180,14 @@ def waiting_option(command: argparse.ArgumentParser) -> None:
         "--waiting",
         action=argparse.BooleanOptionalAction,
         help="The task waits on someone else; --no-waiting resumes it",
+    )
+
+
+def review_option(command: argparse.ArgumentParser) -> None:
+    command.add_argument(
+        "--review",
+        action=argparse.BooleanOptionalAction,
+        help="Chat work is done but not delivered; --no-review puts it back in progress",
     )
 
 
@@ -372,6 +387,7 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
             description=args.description,
             next_step=args.next,
             waiting=args.waiting,
+            review=args.review,
             clear_original=args.clear_original,
             before=args.before,
             after=args.after,
@@ -387,7 +403,10 @@ def dispatch(args: argparse.Namespace, ledger: Ledger) -> Any:
             description=args.description,
             next_step=args.next,
             waiting=args.waiting,
+            review=args.review,
         )
+    if command == "link":
+        return ledger.link(args.task_id, args.target, remove=args.rm)
     if command == "map":
         target = args.target.strip()
         if not target or target == config.INBOX:
@@ -454,21 +473,42 @@ def interval_line(i: dict[str, Any]) -> str:
 def task_state(t: dict[str, Any]) -> str:
     if t["status"] == "done":
         return "dropped" if t["dropped"] else "done"
-    return "waiting" if t["waiting"] else "open"
+    if t["waiting"]:
+        return "waiting"
+    return "review" if t["review"] else "open"
 
 
 def task_line(t: dict[str, Any]) -> str:
     ref = f" [{t['ref']}]" if t["ref"] else ""
+    stalled = f"  (stalled since {t['last_activity'][:10]})" if t["stalled"] else ""
     return (
         f"{t['id']}  {task_state(t):<7}  {t['project']}{ref}  {t['title']}  "
-        f"{human_duration(t['duration_seconds'])}"
+        f"{human_duration(t['duration_seconds'])}{stalled}"
     )
+
+
+def chat_line(chat: dict[str, Any], task_id: str) -> str:
+    name = chat["title"] or chat["session"]
+    facts = [chat["session"]] if chat["title"] else []
+    if chat["last_activity"]:
+        last = to_local(parse_iso(chat["last_activity"]), None)
+        facts.append(f"last {last:%Y-%m-%d %H:%M}")
+    facts.append(human_duration(chat["duration_seconds"]))
+    if chat["active"]:
+        facts.append("active")
+    if chat["task_id"] != task_id:
+        facts.append(f"now on {chat['task_id']}" if chat["task_id"] else "no longer tracked")
+    lines = [f"chat {name}  ({', '.join(facts)})"]
+    if chat["resume"]:
+        lines.append(f"  resume: {chat['resume']}")
+    return "\n".join(lines)
 
 
 STATUS_LABELS = {
     "inbox": "Inbox",
     "todo": "To do",
     "progress": "In progress",
+    "review": "Review",
     "waiting": "Waiting",
     "done": "Done",
 }
@@ -478,13 +518,17 @@ def status_text(data: dict[str, Any]) -> str:
     counts = data["counts"]
     labels = {**STATUS_LABELS, "done": f"Done ({data['done_days']} days)"}
     lines = [" · ".join(f"{label} {counts[key]}" for key, label in labels.items())]
-    for key in ("progress", "waiting", "todo"):
+    for key in ("progress", "review", "waiting", "todo"):
         if data["columns"][key]:
             lines.append(STATUS_LABELS[key])
         for task in data["columns"][key]:
             lines.append(f"  {task_line(task)}")
             if task["next"]:
                 lines.append(f"      next: {task['next']}")
+    columns = data["columns"]
+    stalled = [t["id"] for key in ("progress", "review") for t in columns[key] if t["stalled"]]
+    if stalled:
+        lines.append(f"Stalled (no time for a while): {', '.join(stalled)}")
     if counts["inbox"]:
         lines.append("To triage: worklog list --project inbox --open")
     return "\n".join(lines)
@@ -503,7 +547,7 @@ def human(args: argparse.Namespace, data: Any) -> str:
             f"Removed {data['id']} ({human_duration(data['duration_seconds'])}, "
             f"{data['removed_intervals']} intervals)"
         )
-    if command in ("task", "add", "edit"):
+    if command in ("task", "add", "edit", "link"):
         return task_line(data)
     if command == "list":
         return "\n".join(task_line(t) for t in data) or "No tasks."
@@ -515,8 +559,10 @@ def human(args: argparse.Namespace, data: Any) -> str:
                 "  original note:",
                 *(f"    {line}" for line in data["original"].splitlines()),
             ]
+        lines += [f"  link {link}" for link in data["links"]]
         lines += [f"  {interval_line(i)}" for i in data["intervals"]]
-        lines += [f"  chat {s}" for s in data["sessions"]]
+        for chat in data["chats"]:
+            lines += [f"  {line}" for line in chat_line(chat, data["id"]).splitlines()]
         return "\n".join(lines)
     if command in ("assign", "move") and "session" in data and "task_id" in data:
         if command == "move" and "cwd" not in data:
